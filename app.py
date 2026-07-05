@@ -110,27 +110,30 @@ def call_ollama(messages, model=None, stream=False):
         return {"error": f"Ollama error: {str(e)}"}
 
 
-def analyze_with_ollama(text, filename, model=None, content_type="document"):
+def analyze_with_ollama(text, filename, model=None, content_type="document", language="en"):
     """Send text content to Ollama for initial analysis."""
     model = model or DEFAULT_MODEL
     max_chars = 15000
     if len(text) > max_chars:
         text = text[:max_chars] + "\n\n...[truncated]"
 
+    # Determine language instruction
+    lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
+
     if content_type == "code":
-        system_prompt = """You are a code analysis assistant. Analyze the provided code and provide:
+        system_prompt = f"""You are a code analysis assistant. Analyze the provided code and provide:
 1. The programming language and overall purpose
 2. Key components (functions, classes, modules)
 3. Notable patterns, potential issues, or improvements
 4. How the code works at a high level
-Be technical and precise. Respond in the user's language."""
+Be technical and precise. {lang_instruction}"""
         user_prompt = f"""Please analyze this code (filename: {filename}):
 ---
 {text}
 ---"""
     else:
-        system_prompt = """You are a document analysis assistant. Analyze the document and extract key information.
-Summarize and highlight important points, data, and insights. Respond in the same language as the document."""
+        system_prompt = f"""You are a document analysis assistant. Analyze the document and extract key information.
+Summarize and highlight important points, data, and insights. {lang_instruction}"""
         user_prompt = f"""Please analyze this document (filename: {filename}):
 ---
 {text}
@@ -171,6 +174,7 @@ def upload_document():
         return jsonify({"error": "No file selected"}), 400
 
     model = request.form.get('model', DEFAULT_MODEL)
+    language = request.form.get('language', 'en')  # Default to English
     if not allowed_file(file.filename):
         return jsonify({"error": "File type not supported"}), 400
 
@@ -214,7 +218,7 @@ def upload_document():
                     "filename": filename, "filepath": filepath, "text": ocr_text,
                     "model": model, "file_type": "document", "conversation": []
                 }
-                analysis = analyze_with_ollama(ocr_text, filename, model, "document")
+                analysis = analyze_with_ollama(ocr_text, filename, model, "document", language)
                 if "error" not in analysis:
                     analysis_content = analysis.get('message', {}).get('content', '')
                     doc_sessions[session_id]["conversation"].append({
@@ -232,7 +236,8 @@ def upload_document():
                 }), 400
 
         # Use vision model directly
-        vision_prompt = "Describe this image in detail. What do you see? What text or content is present?"
+        lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
+        vision_prompt = f"Describe this image in detail. What do you see? What text or content is present? {lang_instruction}"
         messages = [
             {
                 "role": "user",
@@ -275,7 +280,7 @@ def upload_document():
         "model": model, "file_type": "document", "conversation": []
     }
 
-    analysis = analyze_with_ollama(extracted_text, filename, model, "document")
+    analysis = analyze_with_ollama(extracted_text, filename, model, "document", language)
     if "error" in analysis:
         return jsonify({"session_id": session_id, "filename": filename, "error": analysis["error"]}), 500
 
@@ -297,6 +302,7 @@ def chat_document():
         return jsonify({"error": "No JSON data"}), 400
     session_id = data.get('session_id')
     question = data.get('question', '').strip()
+    language = data.get('language', 'en')
     if not session_id or session_id not in doc_sessions:
         return jsonify({"error": "Session not found. Upload a file first."}), 400
     if not question:
@@ -306,12 +312,15 @@ def chat_document():
     model = data.get('model', session.get('model', DEFAULT_MODEL))
     is_image = session.get('file_type') == 'image'
 
+    # Determine language instruction
+    lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
+
     if is_image and session.get('base64_image'):
         # Send image + question to vision model
         messages = [
             {
                 "role": "user",
-                "content": question,
+                "content": f"{question}\n\n{lang_instruction}",
                 "images": [session['base64_image']]
             }
         ]
@@ -320,7 +329,8 @@ def chat_document():
     else:
         system_prompt = f"""You are a document analysis assistant. Answer based ONLY on the document.
 Document: {session['filename']}
-Content: {session['text']}"""
+Content: {session['text']}
+{lang_instruction}"""
         messages = [{"role": "system", "content": system_prompt}]
         for msg in session["conversation"][-10:]:
             messages.append(msg)
@@ -359,6 +369,7 @@ def analyze_code():
 
     language = data.get('language', 'auto-detect')
     model = data.get('model', DEFAULT_MODEL)
+    ui_language = data.get('ui_language', 'en')  # Get UI language from frontend
 
     session_id = uuid.uuid4().hex
     code_sessions[session_id] = {
@@ -368,7 +379,7 @@ def analyze_code():
         "conversation": []
     }
 
-    analysis = analyze_with_ollama(code, f"code.{language}", model, "code")
+    analysis = analyze_with_ollama(code, f"code.{language}", model, "code", ui_language)
     if "error" in analysis:
         return jsonify({"session_id": session_id, "error": analysis["error"]}), 500
 
@@ -393,6 +404,7 @@ def chat_code():
         return jsonify({"error": "No JSON data"}), 400
     session_id = data.get('session_id')
     question = data.get('question', '').strip()
+    language = data.get('language', 'en')
     if not session_id or session_id not in code_sessions:
         return jsonify({"error": "Session not found. Analyze code first."}), 400
     if not question:
@@ -401,12 +413,16 @@ def chat_code():
     session = code_sessions[session_id]
     model = data.get('model', session.get('model', DEFAULT_MODEL))
 
+    # Determine language instruction
+    lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
+
     system_prompt = f"""You are a code analysis assistant. Answer based on the code provided.
 Code language: {session['language']}
 Code:
 ---
 {session['code']}
----"""
+---
+{lang_instruction}"""
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in session["conversation"][-10:]:

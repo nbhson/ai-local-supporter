@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -32,6 +32,15 @@
                     <span class="tab-icon">💻</span>
                     <span class="tab-label">Code</span>
                 </button>
+            </div>
+
+            <!-- Language Selection (shared) -->
+            <div class="language-selector sidebar-section">
+                <label for="languageSelect">🌐 Language:</label>
+                <select id="languageSelect">
+                    <option value="en">English</option>
+                    <option value="vi">Tiếng Việt</option>
+                </select>
             </div>
 
             <!-- Model Selection (shared) -->
@@ -230,6 +239,7 @@
         // ===== STATE =====
         const state = {
             activeTab: 'doc',
+            language: 'en', // Default to English
             doc: { sessionId: null, filename: null, model: null, isProcessing: false },
             code: { sessionId: null, codename: null, model: null, isProcessing: false }
         };
@@ -239,6 +249,7 @@
         const uploadArea = $('uploadArea');
         const fileInput = $('fileInput');
         const modelSelect = $('modelSelect');
+        const languageSelect = $('languageSelect');
         const uploadProgress = $('uploadProgress');
         const progressFill = $('progressFill');
         const progressText = $('progressText');
@@ -270,6 +281,7 @@
         async function init() {
             await loadModels();
             setupEventListeners();
+            updateUILanguage(); // Set default language on page load
         }
 
         async function loadModels() {
@@ -305,14 +317,15 @@
             const tab = state.activeTab;
             const s = tab === 'doc' ? state.doc : state.code;
             const hasSession = tab === 'doc' ? !!state.doc.sessionId : !!state.code.sessionId;
+            const t = translations[state.language];
 
             if (hasSession) {
                 chatInputContainer.style.display = 'block';
                 chatInput.disabled = false;
                 sendBtn.disabled = false;
                 chatInput.placeholder = tab === 'doc'
-                    ? 'Nhập câu hỏi về tài liệu...'
-                    : 'Nhập câu hỏi về code...';
+                    ? t.docChatPlaceholder
+                    : t.codeChatPlaceholder;
                 chatInput.focus();
             } else {
                 chatInputContainer.style.display = 'none';
@@ -326,6 +339,12 @@
             // Tab switching
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+            });
+
+            // Language change
+            languageSelect.addEventListener('change', (e) => {
+                state.language = e.target.value;
+                updateUILanguage();
             });
 
             // Upload
@@ -392,6 +411,7 @@
             const formData = new FormData();
             formData.append('file', file);
             formData.append('model', state.doc.model);
+            formData.append('language', state.language);
 
             try {
                 const res = await fetch('/api/doc/upload', {
@@ -516,7 +536,8 @@
                     body: JSON.stringify({
                         code: code,
                         language: codeLanguage.value,
-                        model: state.code.model
+                        model: state.code.model,
+                        ui_language: state.language
                     })
                 });
 
@@ -579,7 +600,8 @@
                     body: JSON.stringify({
                         session_id: s.sessionId,
                         question: question,
-                        model: modelSelect.value
+                        model: modelSelect.value,
+                        language: state.language
                     })
                 });
 
@@ -631,6 +653,87 @@
             codeWelcome.style.display = 'flex';
             updateChatInput();
             showToast('🔄', 'Đã xóa. Paste code mới.');
+        }
+
+        // ===== LANGUAGE MANAGEMENT =====
+        const translations = {
+            en: {
+                uploadText: 'Drag & drop files here',
+                uploadSubtext: 'or click to select files',
+                uploadFormats: 'PDF, DOCX, TXT, MD, PNG, JPG, ...',
+                processing: 'Processing...',
+                analyzing: 'Analyzing with AI...',
+                completed: '✅ Complete!',
+                analyzed: '✅ Analyzed',
+                docTab: 'Documents',
+                codeTab: 'Code',
+                pasteCode: 'Paste your code here',
+                analyzeCode: 'Analyze Code',
+                analyzingCode: '⏳ Analyzing...',
+                chatPlaceholder: 'Type your question...',
+                docChatPlaceholder: 'Ask about the document...',
+                codeChatPlaceholder: 'Ask about the code...',
+                uploadError: 'File too large. Limit 50MB.',
+                selectFileError: 'Please select a file first!',
+                clearSession: 'Cleared. Upload new file.',
+                clearCodeSession: 'Cleared. Paste new code.',
+                welcomeDoc: 'Document Analysis',
+                welcomeDocDesc: 'Upload files to analyze and ask questions',
+                welcomeCode: 'Code Analysis',
+                welcomeCodeDesc: 'Paste code in sidebar to analyze and ask questions'
+            },
+            vi: {
+                uploadText: 'Kéo thả file vào đây',
+                uploadSubtext: 'hoặc click để chọn file',
+                uploadFormats: 'PDF, DOCX, TXT, MD, PNG, JPG, ...',
+                processing: 'Đang xử lý...',
+                analyzing: 'Đang phân tích với AI...',
+                completed: '✅ Hoàn tất!',
+                analyzed: '✅ Đã phân tích',
+                docTab: 'Tài liệu',
+                codeTab: 'Code',
+                pasteCode: 'Dán code của bạn vào đây',
+                analyzeCode: 'Phân tích Code',
+                analyzingCode: '⏳ Đang phân tích...',
+                chatPlaceholder: 'Nhập câu hỏi...',
+                docChatPlaceholder: 'Nhập câu hỏi về tài liệu...',
+                codeChatPlaceholder: 'Nhập câu hỏi về code...',
+                uploadError: 'File quá lớn. Giới hạn 50MB.',
+                selectFileError: 'Vui lòng paste code trước!',
+                clearSession: 'Đã xóa. Upload file mới.',
+                clearCodeSession: 'Đã xóa. Paste code mới.',
+                welcomeDoc: 'Phân tích tài liệu',
+                welcomeDocDesc: 'Upload file để phân tích và đặt câu hỏi',
+                welcomeCode: 'Phân tích Code',
+                welcomeCodeDesc: 'Dán code vào sidebar để phân tích và đặt câu hỏi'
+            }
+        };
+
+        function updateUILanguage() {
+            const lang = state.language;
+            const t = translations[lang];
+            
+            // Update upload area
+            document.querySelector('.upload-text').textContent = t.uploadText;
+            document.querySelector('.upload-subtext').textContent = t.uploadSubtext;
+            document.querySelector('.upload-formats').textContent = t.uploadFormats;
+            
+            // Update tab labels
+            document.querySelector('[data-tab="doc"] .tab-label').textContent = t.docTab;
+            document.querySelector('[data-tab="code"] .tab-label').textContent = t.codeTab;
+            
+            // Update code section
+            document.querySelector('.code-textarea').placeholder = t.pasteCode;
+            analyzeCodeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> ${t.analyzeCode}`;
+            
+            // Update welcome screens
+            document.querySelector('#docWelcome h2').textContent = t.welcomeDoc;
+            document.querySelector('#docWelcome p').textContent = t.welcomeDocDesc;
+            document.querySelector('#codeWelcome h2').textContent = t.welcomeCode;
+            document.querySelector('#codeWelcome p').textContent = t.welcomeCodeDesc;
+            
+            // Update chat input placeholder
+            updateChatInput();
         }
 
         // ===== UTILITIES =====
