@@ -97,7 +97,10 @@ def call_ollama(messages, model=None, stream=False):
         response = requests.post(
             f"{OLLAMA_URL}/chat", json=payload, timeout=180
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            error_detail = response.text
+            print(f"Ollama API Error {response.status_code}: {error_detail}")
+            return {"error": f"Ollama API error {response.status_code}: {error_detail}"}
         return response.json()
     except requests.exceptions.ConnectionError:
         return {"error": "Cannot connect to Ollama. Make sure Ollama is running"}
@@ -183,43 +186,26 @@ def upload_document():
     if is_image:
         with open(filepath, 'rb') as img_file:
             base64_image = base64.b64encode(img_file.read()).decode('utf-8')
-
-        if is_vision_model(model):
-            # Use vision model directly
-            vision_prompt = "Describe this image in detail. What do you see? What text or content is present?"
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": vision_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ]
-            result = call_ollama(messages, model)
-            analysis_content = result.get('message', {}).get('content', '') if "error" not in result else None
-
-            session_id = uuid.uuid4().hex
-            doc_sessions[session_id] = {
-                "filename": filename, "filepath": filepath, "text": "[Image analyzed via vision model]",
-                "model": model, "file_type": "image", "conversation": [],
-                "base64_image": base64_image
-            }
-
-            if analysis_content:
-                doc_sessions[session_id]["conversation"].append({
-                    "role": "assistant", "content": f"[Image Analysis for: {filename}]\n\n{analysis_content}"
-                })
-                return jsonify({
-                    "session_id": session_id, "filename": filename, "file_type": "image",
-                    "analysis": analysis_content, "text_preview": ""
-                })
-            else:
-                return jsonify({
-                    "session_id": session_id, "filename": filename, "file_type": "image",
-                    "analysis": result.get("error", "Vision model failed. Try OCR fallback."), "text_preview": ""
-                }), 500
-        else:
+        
+        # Get the correct MIME type based on file extension
+        ext = filepath.rsplit('.', 1)[1].lower() if '.' in filepath else 'jpeg'
+        mime_type_map = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif': 'image/gif',
+            'bmp': 'image/bmp',
+            'tiff': 'image/tiff',
+            'tif': 'image/tiff',
+            'webp': 'image/webp'
+        }
+        mime_type = mime_type_map.get(ext, 'image/jpeg')
+        
+        print(f"Image upload: filename={filename}, model={model}, is_vision={is_vision_model(model)}, mime_type={mime_type}")
+        
+        # Check if the selected model is actually a vision model
+        if not is_vision_model(model):
+            print(f"Warning: Model {model} is not a vision model. Falling back to OCR.")
             # Fallback to OCR for non-vision models
             ocr_text = extract_text_from_image_ocr(filepath)
             if ocr_text and not ocr_text.startswith("OCR Error"):
@@ -244,6 +230,39 @@ def upload_document():
                 return jsonify({
                     "error": f"Model {model} không hỗ trợ đọc ảnh. Hãy dùng qwen2.5-vl:7b hoặc OCR fallback thất bại: {ocr_text}"
                 }), 400
+
+        # Use vision model directly
+        vision_prompt = "Describe this image in detail. What do you see? What text or content is present?"
+        messages = [
+            {
+                "role": "user",
+                "content": vision_prompt,
+                "images": [base64_image]
+            }
+        ]
+        result = call_ollama(messages, model)
+        analysis_content = result.get('message', {}).get('content', '') if "error" not in result else None
+
+        session_id = uuid.uuid4().hex
+        doc_sessions[session_id] = {
+            "filename": filename, "filepath": filepath, "text": "[Image analyzed via vision model]",
+            "model": model, "file_type": "image", "conversation": [],
+            "base64_image": base64_image
+        }
+
+        if analysis_content:
+            doc_sessions[session_id]["conversation"].append({
+                "role": "assistant", "content": f"[Image Analysis for: {filename}]\n\n{analysis_content}"
+            })
+            return jsonify({
+                "session_id": session_id, "filename": filename, "file_type": "image",
+                "analysis": analysis_content, "text_preview": ""
+            })
+        else:
+            return jsonify({
+                "session_id": session_id, "filename": filename, "file_type": "image",
+                "analysis": result.get("error", "Vision model failed. Try OCR fallback."), "text_preview": ""
+            }), 500
 
     # Text-based files
     if extracted_text is None or extracted_text.startswith("Error"):
@@ -292,10 +311,8 @@ def chat_document():
         messages = [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": question},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{session['base64_image']}"}}
-                ]
+                "content": question,
+                "images": [session['base64_image']]
             }
         ]
         for msg in session["conversation"][-10:]:
