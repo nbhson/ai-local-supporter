@@ -51,9 +51,19 @@ async function loadModels() {
         const res = await fetch('/api/models');
         const data = await res.json();
         if (data.models && data.models.length > 0) {
-            modelSelect.innerHTML = data.models.map(m =>
-                `<option value="${m}">${m}</option>`
-            ).join('');
+            modelSelect.innerHTML = data.models.map(m => {
+                const lowerM = m.toLowerCase();
+                const isEmbedding = lowerM.includes('embed') || lowerM.includes('minilm') || lowerM.includes('bge-');
+                return `<option value="${m}" ${isEmbedding ? 'disabled style="color: #888; font-style: italic; background-color: #222;"' : ''}>${m}${isEmbedding ? ' (embedding)' : ''}</option>`;
+            }).join('');
+
+            // Select the first non-disabled option by default
+            const enabledOptions = Array.from(modelSelect.options).filter(opt => !opt.disabled);
+            if (enabledOptions.length > 0) {
+                modelSelect.value = enabledOptions[0].value;
+                if (!state.doc.model) state.doc.model = modelSelect.value;
+                if (!state.code.model) state.code.model = modelSelect.value;
+            }
         }
     } catch (e) {
         console.warn('Could not load models:', e);
@@ -183,39 +193,68 @@ async function handleFileUpload(file) {
             },
             body: formData
         });
-        progressFill.style.width = '70%';
-        progressText.textContent = 'Đang phân tích với AI...';
+        
+        const uploadData = await res.json();
+        if (!res.ok) throw new Error(uploadData.error || 'Upload failed');
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Upload failed');
-
-        state.doc.sessionId = data.session_id;
-        state.doc.filename = data.filename;
-
-        progressFill.style.width = '100%';
-        progressText.textContent = '✅ Hoàn tất!';
-
-        setTimeout(() => {
-            uploadProgress.style.display = 'none';
-            showDocFileInfo(data);
+        const sessionId = uploadData.session_id;
+        state.doc.sessionId = sessionId;
+        
+        // Start polling document processing status
+        let attempts = 0;
+        const maxAttempts = 120; // 3 minutes timeout (2s per poll = 240s)
+        
+        while (attempts < maxAttempts) {
+            const statusRes = await fetch(`/api/doc/status/${sessionId}`);
+            if (!statusRes.ok) {
+                const statusErr = await statusRes.json();
+                throw new Error(statusErr.error || 'Failed to check status');
+            }
             
-            docWelcome.style.display = 'none';
-            docChatMessages.style.display = 'flex';
-            docChatMessages.innerHTML = '';
+            const statusData = await statusRes.json();
             
-            addDocMessage('assistant', data.greeting);
-            updateChatInput();
-        }, 500);
+            if (statusData.status === 'ready') {
+                state.doc.filename = statusData.filename;
+                progressFill.style.width = '100%';
+                progressText.textContent = state.language === 'vi' ? '✅ Hoàn tất!' : '✅ Completed!';
+                
+                setTimeout(() => {
+                    uploadProgress.style.display = 'none';
+                    showDocFileInfo(statusData);
+                    
+                    docWelcome.style.display = 'none';
+                    docChatMessages.style.display = 'flex';
+                    docChatMessages.innerHTML = '';
+                    
+                    addDocMessage('assistant', statusData.greeting);
+                    updateChatInput();
+                }, 500);
+                return;
+            } else if (statusData.status === 'failed') {
+                throw new Error(statusData.error || 'Processing failed');
+            }
+            
+            attempts++;
+            const pct = Math.min(95, 20 + attempts * 3); // cap visual progress until finished
+            progressFill.style.width = `${pct}%`;
+            progressText.textContent = state.language === 'vi' 
+                ? `Đang phân tích tài liệu với AI (${pct}%)...`
+                : `Analyzing document with AI (${pct}%)...`;
+                
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        throw new Error(state.language === 'vi' ? 'Thời gian chờ xử lý file quá lâu.' : 'File processing timed out.');
     } catch (err) {
         progressFill.style.width = '100%';
         progressFill.style.background = '#ef4444';
-        progressText.textContent = '❌ Lỗi: ' + err.message;
+        progressText.textContent = (state.language === 'vi' ? '❌ Lỗi: ' : '❌ Error: ') + err.message;
         showToast('❌', err.message);
         setTimeout(() => {
             uploadProgress.style.display = 'none';
             uploadArea.style.display = 'block';
             progressFill.style.background = 'var(--primary-color)';
-        }, 2000);
+        }, 3000);
     }
 }
 

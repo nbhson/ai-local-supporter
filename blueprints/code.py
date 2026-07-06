@@ -3,8 +3,9 @@ import json
 from flask import Blueprint, request, jsonify, Response
 
 import config
-from services.session_store import code_sessions
-from services.ollama_service import call_ollama, analyze_with_ollama
+from services.database import db
+from services.models import CodeSession, ChatMessage
+from services.ollama_service import call_ollama
 
 code_bp = Blueprint('code', __name__)
 
@@ -35,15 +36,24 @@ def analyze_code():
 
     session_id = uuid.uuid4().hex
 
-    code_sessions[session_id] = {
-        "code": code,
-        "language": language,
-        "model": model,
-        "conversation": [
-            {"role": "assistant", "content": greeting}
-        ],
-        "ui_language": ui_language
-    }
+    # Create CodeSession in DB
+    session = CodeSession(
+        session_id=session_id,
+        code=code,
+        language=language,
+        model=model,
+        ui_language=ui_language
+    )
+    db.session.add(session)
+
+    # Save initial greeting message
+    greeting_msg = ChatMessage(
+        session_id=session_id,
+        role='assistant',
+        content=greeting
+    )
+    db.session.add(greeting_msg)
+    db.session.commit()
 
     return jsonify({
         "session_id": session_id,
@@ -60,62 +70,75 @@ def chat_code():
     session_id = data.get('session_id')
     question = data.get('question', '').strip()
     language = data.get('language', 'en')
-    if not session_id or session_id not in code_sessions:
+    
+    session = CodeSession.query.get(session_id)
+    if not session:
         return jsonify({"error": "Session not found. Analyze code first."}), 400
     if not question:
         return jsonify({"error": "Question cannot be empty"}), 400
 
-    session = code_sessions[session_id]
-    model = data.get('model', session.get('model', config.DEFAULT_MODEL))
+    model = data.get('model', session.model or config.DEFAULT_MODEL)
 
     # Determine language instruction
     lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
     
     system_prompt = f"""You are a code analysis assistant. Answer based on the code provided.
-Code language: {session['language']}
+Code language: {session.language}
 Code:
 ---
-{session['code']}
+{session.code}
 ---
 {lang_instruction}"""
 
     messages = [{"role": "system", "content": system_prompt}]
-    # Retrieve last 10 messages from history to maintain context
-    for msg in session["conversation"][-10:]:
-        messages.append(msg)
     
-    # Append the new user question
+    # Retrieve last 10 messages from DB
+    chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
+    for msg in chat_history[-10:]:
+        messages.append({"role": msg.role, "content": msg.content})
+    
+    # Save user message to history
+    user_msg = ChatMessage(session_id=session_id, role='user', content=question)
+    db.session.add(user_msg)
+    db.session.commit()
+    
+    # Append the new user question to active message context
     messages.append({"role": "user", "content": question})
 
-    # Save user message to history
-    session["conversation"].append({"role": "user", "content": question})
-
     def generate():
-        generator = call_ollama(messages, model, stream=True)
-        full_answer = ""
-        for chunk in generator:
-            if chunk.startswith("data: "):
-                data_str = chunk[6:].strip()
-                if data_str != "[DONE]":
-                    try:
-                        data_json = json.loads(data_str)
-                        if "content" in data_json:
-                            full_answer += data_json["content"]
-                    except:
-                        pass
-            yield chunk
-        session["conversation"].append({"role": "assistant", "content": full_answer})
+        # Call Ollama using app context since we access DB inside generate()
+        from app import app
+        with app.app_context():
+            generator = call_ollama(messages, model, stream=True)
+            full_answer = ""
+            for chunk in generator:
+                if chunk.startswith("data: "):
+                    data_str = chunk[6:].strip()
+                    if data_str != "[DONE]":
+                        try:
+                            data_json = json.loads(data_str)
+                            if "content" in data_json:
+                                full_answer += data_json["content"]
+                        except:
+                            pass
+                yield chunk
+            
+            # Save assistant response to DB
+            assistant_msg = ChatMessage(session_id=session_id, role='assistant', content=full_answer)
+            db.session.add(assistant_msg)
+            db.session.commit()
 
     return Response(generate(), mimetype='text/event-stream')
 
 @code_bp.route('/session/<session_id>/clear', methods=['POST'])
 def clear_code_session(session_id):
-    if session_id not in code_sessions:
+    session = CodeSession.query.get(session_id)
+    if not session:
         return jsonify({"error": "Session not found"}), 404
-    # Reset conversation history but keep initial setup (first prompt + greeting) to maintain prompt caching
-    if len(code_sessions[session_id]["conversation"]) >= 2:
-        initial_setup = code_sessions[session_id]["conversation"][:2]
-        code_sessions[session_id]["conversation"] = initial_setup
-    else:
-        code_sessions[session_id]["conversation"] = []
+        
+    # Reset conversation history but keep the first message (greeting)
+    first_msg = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).first()
+    if first_msg:
+        ChatMessage.query.filter(ChatMessage.session_id == session_id, ChatMessage.id != first_msg.id).delete()
+    db.session.commit()
     return jsonify({"success": True})

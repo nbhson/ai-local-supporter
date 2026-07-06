@@ -3,6 +3,7 @@ import requests
 from flask import Flask, render_template, jsonify
 from blueprints.doc import doc_bp
 from blueprints.code import code_bp
+from services.database import db
 import config
 
 app = Flask(__name__)
@@ -10,8 +11,19 @@ app = Flask(__name__)
 # Configuration
 app.config['UPLOAD_FOLDER'] = config.UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
+app.config['SQLALCHEMY_DATABASE_URI'] = config.SQLALCHEMY_DATABASE_URI
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['CELERY_BROKER_URL'] = config.CELERY_BROKER_URL
+app.config['CELERY_RESULT_BACKEND'] = config.CELERY_RESULT_BACKEND
+
+# Initialize DB
+db.init_app(app)
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Create tables
+with app.app_context():
+    db.create_all()
 
 # Register Blueprints
 app.register_blueprint(doc_bp, url_prefix='/api/doc')

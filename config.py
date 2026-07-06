@@ -14,3 +14,11 @@ OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", 8192))
 
 IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'tif', 'webp'}
 VISION_MODELS = {'qwen2.5-vl', 'qwen2.5vl', 'llava', 'bakllava', 'moondream', 'cog-vlm'}
+
+# Database & Celery Configuration
+SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", "sqlite:///ai_local_support.db")
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+
+# Embedding Configuration for RAG
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")

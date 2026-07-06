@@ -215,6 +215,7 @@ body {
 
 .language-selector select {
     flex: 1;
+    min-width: 0;
     padding: 6px 10px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -246,6 +247,7 @@ body {
 
 .model-selector select {
     flex: 1;
+    min-width: 0;
     padding: 6px 10px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -973,5 +975,6 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
 
 /* Custom Scrollbar moved up */

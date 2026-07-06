@@ -1,0 +1,36 @@
+from datetime import datetime
+from services.database import db
+
+class DocumentSession(db.Model):
+    __tablename__ = 'document_sessions'
+    
+    session_id = db.Column(db.String(36), primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    filepath = db.Column(db.String(512), nullable=False)
+    status = db.Column(db.String(50), default='processing')  # 'processing', 'ready', 'failed'
+    error_message = db.Column(db.Text, nullable=True)
+    language = db.Column(db.String(10), default='en')
+    model = db.Column(db.String(100), nullable=False)
+    file_type = db.Column(db.String(20), nullable=False)      # 'document', 'image'
+    base64_image = db.Column(db.Text, nullable=True)          # Stored for vision model
+    extracted_text = db.Column(db.Text, nullable=True)        # Backup/preview text
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class CodeSession(db.Model):
+    __tablename__ = 'code_sessions'
+    
+    session_id = db.Column(db.String(36), primary_key=True)
+    code = db.Column(db.Text, nullable=False)
+    language = db.Column(db.String(50), default='auto-detect')
+    model = db.Column(db.String(100), nullable=False)
+    ui_language = db.Column(db.String(10), default='en')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ChatMessage(db.Model):
+    __tablename__ = 'chat_messages'
+    
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    session_id = db.Column(db.String(36), index=True, nullable=False)
+    role = db.Column(db.String(20), nullable=False)           # 'system', 'user', 'assistant'
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
