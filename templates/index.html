@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Local Support</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -64,9 +64,9 @@
                             <span class="material-symbols-rounded upload-icon-symbol">cloud_upload</span>
                         </div>
                         <p class="upload-text">Kéo thả file vào đây</p>
-                        <p class="upload-subtext">hoặc click để chọn file</p>
+                        <p class="upload-subtext">hoặc click để chọn file (tối đa 3 files)</p>
                         <p class="upload-formats">PDF, DOCX, TXT, MD, PNG, JPG, ...</p>
-                        <input type="file" id="fileInput" hidden>
+                        <input type="file" id="fileInput" multiple hidden>
                     </div>
 
                     <div class="upload-progress" id="uploadProgress" style="display:none;">
@@ -76,20 +76,14 @@
                         <p class="progress-text" id="progressText">Đang xử lý...</p>
                     </div>
 
-                    <div class="file-info" id="fileInfo" style="display:none;">
-                        <div class="file-icon" id="fileIcon">
-                            <span class="material-symbols-rounded">description</span>
+                    <div class="file-info-list-container" id="fileInfoList" style="display:none; flex-direction: column; gap: 8px; width: 100%;">
+                        <div id="fileList" style="display: flex; flex-direction: column; gap: 8px; width: 100%;"></div>
+                        <div style="display: flex; justify-content: flex-end; width: 100%; margin-top: 4px;">
+                            <button class="btn-icon" id="clearSessionBtn" title="Xóa tất cả" style="padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-card); display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 500;">
+                                <span class="material-symbols-rounded" style="font-size: 1.1rem !important;">delete</span>
+                                <span>Xóa tất cả</span>
+                            </button>
                         </div>
-                        <div class="file-details">
-                            <p class="file-name" id="fileName">document.pdf</p>
-                            <p class="file-status" id="fileStatus">Đã phân tích</p>
-                        </div>
-                        <button class="btn-icon" id="clearSessionBtn" title="Xóa">
-                            <span class="material-symbols-rounded">delete</span>
-                        </button>
-                    </div>
-                    <div class="image-preview" id="imagePreview" style="display:none;">
-                        <img id="previewImg" src="" alt="Preview">
                     </div>
                 </div>
 
@@ -304,6 +298,17 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <!-- Image Preview Modal (Inlined for maximum robustness against caching) -->
+    <div id="imageModal" class="image-modal" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); display: none; align-items: center; justify-content: center; z-index: 999999;">
+        <div class="image-modal-content" style="max-width: 85vw; max-height: 85vh; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; transform: scale(1);">
+            <button class="image-modal-close" id="closeImageModal" title="Đóng" style="position: absolute; top: -45px; right: 0; background: rgba(255, 255, 255, 0.15); border: none; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; outline: none; transition: background 0.2s;">
+                <span class="material-symbols-rounded" style="font-size: 1.3rem !important;">close</span>
+            </button>
+            <img id="modalImg" class="image-modal-img" src="" alt="Zoomed Preview" style="max-width: 100%; max-height: 75vh; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.15); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6); object-fit: contain;">
+            <p id="modalCaption" class="image-modal-caption" style="color: #cbd5e1; margin-top: 14px; font-weight: 500; font-size: 0.9rem; text-align: center; font-family: sans-serif;">filename.jpg</p>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

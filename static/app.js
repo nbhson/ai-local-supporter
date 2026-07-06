@@ -16,9 +16,7 @@ const languageSelect = $('languageSelect');
 const uploadProgress = $('uploadProgress');
 const progressFill = $('progressFill');
 const progressText = $('progressText');
-const fileInfo = $('fileInfo');
-const fileName = $('fileName');
-const fileStatus = $('fileStatus');
+const fileInfo = $('fileInfoList');
 const clearSessionBtn = $('clearSessionBtn');
 const quickActions = $('quickActions');
 const docWelcome = $('docWelcome');
@@ -144,10 +142,10 @@ function setupEventListeners() {
     uploadArea.addEventListener('drop', (e) => {
         e.preventDefault();
         uploadArea.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files[0]);
+        if (e.dataTransfer.files.length > 0) handleFileUploads(e.dataTransfer.files);
     });
     fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) handleFileUpload(e.target.files[0]);
+        if (e.target.files.length > 0) handleFileUploads(e.target.files);
     });
 
     // Chat
@@ -194,21 +192,32 @@ function setupEventListeners() {
 }
 
 // ===== DOCUMENT UPLOAD =====
-async function handleFileUpload(file) {
-    if (file.size > 50 * 1024 * 1024) {
-        showToast('⚠️', 'File quá lớn. Giới hạn 50MB.');
+async function handleFileUploads(files) {
+    if (files.length === 0) return;
+    if (files.length > 3) {
+        showToast('⚠️', state.language === 'vi' ? 'Tối đa 3 files được phép tải lên.' : 'Maximum of 3 files allowed.');
         return;
+    }
+
+    // Verify size of each file
+    for (let i = 0; i < files.length; i++) {
+        if (files[i].size > 50 * 1024 * 1024) {
+            showToast('⚠️', state.language === 'vi' ? `File "${files[i].name}" quá lớn. Giới hạn 50MB.` : `File "${files[i].name}" is too large. Limit 50MB.`);
+            return;
+        }
     }
 
     state.doc.model = modelSelect.value;
 
     uploadArea.style.display = 'none';
     uploadProgress.style.display = 'block';
-    progressFill.style.width = '20%';
-    progressText.textContent = `Đang tải lên ${file.name}...`;
+    progressFill.style.width = '10%';
+    progressText.textContent = state.language === 'vi' ? `Đang tải lên ${files.length} file...` : `Uploading ${files.length} files...`;
 
     const formData = new FormData();
-    formData.append('file', file);
+    for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
+    }
     formData.append('model', state.doc.model);
     formData.append('language', state.language);
 
@@ -220,39 +229,39 @@ async function handleFileUpload(file) {
             },
             body: formData
         });
-        
+
         const uploadData = await res.json();
         if (!res.ok) throw new Error(uploadData.error || 'Upload failed');
 
         const sessionId = uploadData.session_id;
         state.doc.sessionId = sessionId;
-        
+
         // Start polling document processing status
         let attempts = 0;
-        const maxAttempts = 120; // 3 minutes timeout (2s per poll = 240s)
-        
+        const maxAttempts = 180; // 6 minutes timeout for 3 files
+
         while (attempts < maxAttempts) {
             const statusRes = await fetch(`/api/doc/status/${sessionId}`);
             if (!statusRes.ok) {
                 const statusErr = await statusRes.json();
                 throw new Error(statusErr.error || 'Failed to check status');
             }
-            
+
             const statusData = await statusRes.json();
-            
+
             if (statusData.status === 'ready') {
                 state.doc.filename = statusData.filename;
                 progressFill.style.width = '100%';
                 progressText.textContent = state.language === 'vi' ? '✅ Hoàn tất!' : '✅ Completed!';
-                
+
                 setTimeout(() => {
                     uploadProgress.style.display = 'none';
                     showDocFileInfo(statusData);
-                    
+
                     docWelcome.style.display = 'none';
                     docChatMessages.style.display = 'flex';
                     docChatMessages.innerHTML = '';
-                    
+
                     addDocMessage('assistant', statusData.greeting);
                     updateChatInput();
                 }, 500);
@@ -260,17 +269,17 @@ async function handleFileUpload(file) {
             } else if (statusData.status === 'failed') {
                 throw new Error(statusData.error || 'Processing failed');
             }
-            
+
             attempts++;
-            const pct = Math.min(95, 20 + attempts * 3); // cap visual progress until finished
+            const pct = Math.min(95, 10 + attempts * 2);
             progressFill.style.width = `${pct}%`;
-            progressText.textContent = state.language === 'vi' 
-                ? `Đang phân tích tài liệu với AI (${pct}%)...`
-                : `Analyzing document with AI (${pct}%)...`;
-                
+            progressText.textContent = state.language === 'vi'
+                ? `Đang phân tích ${files.length} tài liệu với AI (${pct}%)...`
+                : `Analyzing ${files.length} documents with AI (${pct}%)...`;
+
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
-        
+
         throw new Error(state.language === 'vi' ? 'Thời gian chờ xử lý file quá lâu.' : 'File processing timed out.');
     } catch (err) {
         progressFill.style.width = '100%';
@@ -286,8 +295,53 @@ async function handleFileUpload(file) {
 }
 
 function showDocFileInfo(data) {
-    fileName.textContent = data.filename;
-    fileStatus.textContent = '✅ Đã phân tích';
+    const fileList = $('fileList');
+    fileList.innerHTML = '';
+
+    const files = data.files || [];
+    if (files.length === 0) {
+        files.push({
+            filename: data.filename || 'document',
+            file_type: data.file_type || 'document',
+            status: data.status || 'ready'
+        });
+    }
+
+    files.forEach(f => {
+        const isImage = f.file_type === 'image';
+        const fileItem = document.createElement('div');
+        fileItem.className = 'file-info';
+        fileItem.style.marginTop = '0';
+
+        const statusText = f.status === 'ready'
+            ? (state.language === 'vi' ? '✅ Đã phân tích' : '✅ Analyzed')
+            : (f.status === 'failed'
+                ? (state.language === 'vi' ? `❌ Lỗi: ${f.error || 'Thất bại'}` : `❌ Error: ${f.error || 'Failed'}`)
+                : (state.language === 'vi' ? '⏳ Đang xử lý' : '⏳ Processing'));
+
+        fileItem.innerHTML = `
+            <div class="file-icon">
+                <span class="material-symbols-rounded">${isImage ? 'image' : 'description'}</span>
+            </div>
+            <div class="file-details">
+                <p class="file-name" title="${f.filename}">${f.filename}</p>
+                <p class="file-status" style="color: ${f.status === 'ready' ? 'var(--success)' : (f.status === 'failed' ? 'var(--error)' : 'var(--text-secondary)')}">${statusText}</p>
+            </div>
+        `;
+
+        console.log("Binding click for:", f.filename, "isImage:", isImage, "status:", f.status, "unique_filename:", f.unique_filename);
+        if (isImage && f.status === 'ready' && f.unique_filename) {
+            fileItem.style.cursor = 'pointer';
+            fileItem.title = state.language === 'vi' ? 'Click để xem ảnh' : 'Click to view image';
+            fileItem.addEventListener('click', () => {
+                console.log("File card clicked! Calling openModal for:", f.unique_filename);
+                openModal(`/api/doc/files/${f.unique_filename}`, f.filename);
+            });
+        }
+
+        fileList.appendChild(fileItem);
+    });
+
     fileInfo.style.display = 'flex';
     quickActions.style.display = 'block';
     uploadArea.style.display = 'none';
@@ -317,10 +371,10 @@ function addCodeMessage(role, content) {
 
 function formatMessage(text) {
     if (!text) return "";
-    
+
     // Handle DeepSeek <think> tag
     let formatted = text.replace(/<think>([\s\S]*?)<\/think>/g, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded">psychology</span> Thought Process</div><div class="thought-content">$1</div></div>');
-    
+
     // Handle unclosed <think> tag during streaming
     if (formatted.includes('<think>') && !formatted.includes('</think>')) {
         formatted = formatted.replace(/<think>([\s\S]*)/, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded spinning">progress_activity</span> Thinking...</div><div class="thought-content">$1</div></div>');
@@ -358,7 +412,7 @@ window.copyCodeToClipboard = (btn) => {
     const txt = document.createElement('textarea');
     txt.innerHTML = code;
     const decodedCode = txt.value;
-    
+
     navigator.clipboard.writeText(decodedCode).then(() => {
         const icon = btn.querySelector('.material-symbols-rounded');
         icon.textContent = 'check';
@@ -433,7 +487,7 @@ async function analyzeCode() {
         codeWelcome.style.display = 'none';
         codeChatMessages.style.display = 'flex';
         codeChatMessages.innerHTML = '';
-        
+
         addCodeMessage('assistant', data.greeting);
         updateChatInput();
 
@@ -491,7 +545,7 @@ async function sendMessage() {
             const data = await res.json();
             throw new Error(data.error || 'Chat failed');
         }
-        
+
         // create bubble for assistant
         const msgDiv = document.createElement('div');
         msgDiv.className = `message assistant`;
@@ -501,7 +555,7 @@ async function sendMessage() {
         `;
         targetMessages.appendChild(msgDiv);
         const bubble = msgDiv.querySelector('.message-bubble');
-        
+
         await readStream(res, bubble, '');
     } catch (err) {
         removeTypingIndicator();
@@ -524,7 +578,7 @@ async function sendMessage() {
 // ===== SESSION MANAGEMENT =====
 async function clearDocSession() {
     if (state.doc.sessionId) {
-        try { await fetch(`/api/doc/session/${state.doc.sessionId}/clear`, { method: 'POST' }); } catch (e) {}
+        try { await fetch(`/api/doc/session/${state.doc.sessionId}/clear`, { method: 'POST' }); } catch (e) { }
     }
     state.doc.sessionId = null;
     state.doc.filename = null;
@@ -540,7 +594,7 @@ async function clearDocSession() {
 
 async function clearCodeSession() {
     if (state.code.sessionId) {
-        try { await fetch(`/api/code/session/${state.code.sessionId}/clear`, { method: 'POST' }); } catch (e) {}
+        try { await fetch(`/api/code/session/${state.code.sessionId}/clear`, { method: 'POST' }); } catch (e) { }
     }
     state.code.sessionId = null;
     state.code.codename = null;
@@ -562,7 +616,7 @@ async function initChatSession() {
     chatChatMessages.style.display = 'flex';
     chatChatMessages.innerHTML = '';
     showTypingIndicator(chatChatMessages);
-    
+
     try {
         const res = await fetch('/api/chat/init', {
             method: 'POST',
@@ -574,14 +628,14 @@ async function initChatSession() {
         });
         const data = await res.json();
         removeTypingIndicator();
-        
+
         if (!res.ok) throw new Error(data.error || 'Failed to initialize chat');
 
         state.chat.sessionId = data.session_id;
-        
+
         chatStatus.textContent = state.language === 'vi' ? '✅ Sẵn sàng' : '✅ Ready';
         chatQuickActions.style.display = 'block';
-        
+
         addChatMessage('assistant', data.greeting);
         updateChatInput();
     } catch (err) {
@@ -603,7 +657,7 @@ function addChatMessage(role, content) {
 
 async function clearChatSession() {
     if (state.chat.sessionId) {
-        try { await fetch(`/api/chat/session/${state.chat.sessionId}/clear`, { method: 'POST' }); } catch (e) {}
+        try { await fetch(`/api/chat/session/${state.chat.sessionId}/clear`, { method: 'POST' }); } catch (e) { }
     }
     state.chat.sessionId = null;
     chatQuickActions.style.display = 'none';
@@ -680,21 +734,21 @@ const translations = {
 function updateUILanguage() {
     const lang = state.language;
     const t = translations[lang];
-    
+
     // Update upload area
     document.querySelector('.upload-text').textContent = t.uploadText;
     document.querySelector('.upload-subtext').textContent = t.uploadSubtext;
     document.querySelector('.upload-formats').textContent = t.uploadFormats;
-    
+
     // Update tab labels
     document.querySelector('[data-tab="doc"] .tab-label').textContent = t.docTab;
     document.querySelector('[data-tab="code"] .tab-label').textContent = t.codeTab;
     document.querySelector('[data-tab="chat"] .tab-label').textContent = t.chatTab;
-    
+
     // Update code section
     document.querySelector('.code-textarea').placeholder = t.pasteCode;
     analyzeCodeBtn.innerHTML = `<span class="material-symbols-rounded btn-icon-left">analytics</span> ${t.analyzeCode}`;
-    
+
     // Update welcome screens
     document.querySelector('#docWelcome h2').textContent = t.welcomeDoc;
     document.querySelector('#docWelcome p').textContent = t.welcomeDocDesc;
@@ -702,7 +756,7 @@ function updateUILanguage() {
     document.querySelector('#codeWelcome p').textContent = t.welcomeCodeDesc;
     document.querySelector('#chatWelcome h2').textContent = t.welcomeChat;
     document.querySelector('#chatWelcome p').textContent = t.welcomeChatDesc;
-    
+
     // Update chat input placeholder
     updateChatInput();
 }
@@ -716,19 +770,19 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
     while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        
+
         const container = messageBubbleElement.closest('.chat-messages');
         const threshold = 150;
         const wasAtBottom = container ? (container.scrollHeight - container.scrollTop - container.clientHeight < threshold) : false;
 
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
-        
+
         for (const line of lines) {
             if (line.startsWith('data: ')) {
                 const dataStr = line.slice(6).trim();
                 if (dataStr === '[DONE]') break;
-                
+
                 try {
                     const data = JSON.parse(dataStr);
                     if (data.content) {
@@ -742,7 +796,7 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
                 }
             }
         }
-        
+
         if (container && wasAtBottom) {
             container.scrollTop = container.scrollHeight;
         }
@@ -760,6 +814,43 @@ function showToast(icon, message) {
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 4000);
 }
+
+// ===== IMAGE MODAL =====
+const imageModal = $('imageModal');
+const modalImg = $('modalImg');
+const modalCaption = $('modalCaption');
+const closeImageModal = $('closeImageModal');
+console.log("Modal elements initialized:", { imageModal, modalImg, modalCaption, closeImageModal });
+
+function openModal(imgUrl, caption) {
+    console.log("openModal called with:", imgUrl, caption, "elements status:", { modalImg, modalCaption, imageModal });
+    if (modalImg && modalCaption && imageModal) {
+        modalImg.src = imgUrl;
+        modalCaption.textContent = caption;
+        imageModal.style.display = 'flex';
+    }
+}
+
+function closeModal() {
+    if (imageModal && modalImg) {
+        imageModal.style.display = 'none';
+        modalImg.src = '';
+    }
+}
+
+if (closeImageModal) {
+    closeImageModal.addEventListener('click', closeModal);
+}
+if (imageModal) {
+    imageModal.addEventListener('click', (e) => {
+        if (e.target === imageModal) closeModal();
+    });
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && imageModal && imageModal.style.display === 'flex') {
+        closeModal();
+    }
+});
 
 // ===== START =====
 init();

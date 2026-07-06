@@ -4,17 +4,17 @@ import base64
 import logging
 import threading
 import json
-from flask import Blueprint, request, jsonify, Response, current_app
+from flask import Blueprint, request, jsonify, Response, current_app, send_from_directory
 from werkzeug.utils import secure_filename
 
 import config
 from services.database import db
-from services.models import DocumentSession, ChatMessage
+from services.models import DocumentSession, DocumentFile, ChatMessage
 from services.document_service import (
     allowed_file, is_image_file, cleanup_old_uploads
 )
 from services.rag_service import retrieve_context
-from services.ollama_service import call_ollama
+from services.ollama_service import call_ollama, is_vision_model
 from tasks import process_document_task
 
 doc_bp = Blueprint('doc', __name__)
@@ -25,47 +25,86 @@ def upload_document():
     upload_dir = current_app.config['UPLOAD_FOLDER']
     threading.Thread(target=cleanup_old_uploads, args=(upload_dir,), daemon=True).start()
     
-    if 'file' not in request.files:
+    # Support both list of files and single file
+    uploaded_files = []
+    if 'files' in request.files:
+        uploaded_files = request.files.getlist('files')
+    elif 'file' in request.files:
+        uploaded_files = request.files.getlist('file')
+        
+    uploaded_files = [f for f in uploaded_files if f.filename != '']
+    
+    if not uploaded_files:
         return jsonify({"error": "No file provided"}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
+        
+    if len(uploaded_files) > 3:
+        return jsonify({"error": "Tối đa 3 files được phép tải lên"}), 400
 
     model = request.form.get('model', config.DEFAULT_MODEL)
     language = request.form.get('language', 'en')  # Default to English
-    if not allowed_file(file.filename):
-        return jsonify({"error": "File type not supported"}), 400
-
-    filename = secure_filename(file.filename)
-    unique_filename = f"{uuid.uuid4().hex}_{filename}"
-    filepath = os.path.join(upload_dir, unique_filename)
-    file.save(filepath)
-
-    is_image = is_image_file(filepath)
-    file_type = "image" if is_image else "document"
+    
+    # Validate allowed extensions for all files first
+    for file in uploaded_files:
+        if not allowed_file(file.filename):
+            return jsonify({"error": f"File type not supported for: {file.filename}"}), 400
 
     session_id = uuid.uuid4().hex
+    saved_files = []
+
+    for file in uploaded_files:
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex}_{filename}"
+        filepath = os.path.join(upload_dir, unique_filename)
+        file.save(filepath)
+
+        is_image = is_image_file(filepath)
+        file_type = "image" if is_image else "document"
+        
+        saved_files.append({
+            "filename": filename,
+            "filepath": filepath,
+            "file_type": file_type
+        })
+
+    # Join filenames for the primary session metadata
+    all_filenames = ", ".join([f["filename"] for f in saved_files])
+    if len(all_filenames) > 255:
+        all_filenames = all_filenames[:252] + "..."
 
     # Create DocumentSession in database with status='processing'
+    # Use first file's details as fallback for session fields
+    first_file = saved_files[0]
     session = DocumentSession(
         session_id=session_id,
-        filename=filename,
-        filepath=filepath,
+        filename=all_filenames,
+        filepath=first_file["filepath"],
         status='processing',
         language=language,
         model=model,
-        file_type=file_type
+        file_type="image" if any(f["file_type"] == "image" for f in saved_files) else "document"
     )
     db.session.add(session)
     db.session.commit()
 
-    # Trigger Celery background task
-    process_document_task.delay(session_id, filepath, language, model)
+    # Create individual DocumentFile records
+    for f in saved_files:
+        doc_file = DocumentFile(
+            session_id=session_id,
+            filename=f["filename"],
+            filepath=f["filepath"],
+            file_type=f["file_type"],
+            status='processing'
+        )
+        db.session.add(doc_file)
+    db.session.commit()
+
+    # Trigger Celery background task with only session_id
+    process_document_task.delay(session_id, language, model)
 
     return jsonify({
         "session_id": session_id,
         "status": "processing",
-        "filename": filename
+        "filename": all_filenames
     })
 
 @doc_bp.route('/status/<session_id>', methods=['GET'])
@@ -73,6 +112,15 @@ def get_session_status(session_id):
     session = DocumentSession.query.get(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
+
+    files = DocumentFile.query.filter_by(session_id=session_id).all()
+    files_data = [{
+        "filename": f.filename,
+        "file_type": f.file_type,
+        "status": f.status,
+        "error": f.error_message,
+        "unique_filename": os.path.basename(f.filepath) if f.filepath else None
+    } for f in files]
 
     if session.status == 'ready':
         # Get greeting message from DB
@@ -84,16 +132,19 @@ def get_session_status(session_id):
             "filename": session.filename,
             "file_type": session.file_type,
             "greeting": greeting,
-            "text_preview": (session.extracted_text or "")[:500]
+            "text_preview": (session.extracted_text or "")[:500],
+            "files": files_data
         })
     elif session.status == 'failed':
         return jsonify({
             "status": "failed",
-            "error": session.error_message or "An error occurred during file processing."
+            "error": session.error_message or "An error occurred during file processing.",
+            "files": files_data
         })
     else:
         return jsonify({
-            "status": "processing"
+            "status": "processing",
+            "files": files_data
         })
 
 @doc_bp.route('/chat', methods=['POST'])
@@ -112,23 +163,38 @@ def chat_document():
         return jsonify({"error": "Question cannot be empty"}), 400
 
     model = data.get('model', session.model or config.DEFAULT_MODEL)
-    is_image = session.file_type == 'image'
 
     # Determine language instruction
     lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
 
-    if is_image and session.base64_image and session.extracted_text == "[Image analyzed via vision model]":
-        # Send image + question to vision model
-        messages = []
-        # Retrieve last 10 messages from DB
+    # Retrieve all ready base64 images from DocumentFile table
+    image_files = DocumentFile.query.filter_by(session_id=session_id, file_type='image', status='ready').all()
+    base64_images = [img.base64_image for img in image_files if img.base64_image]
+
+    use_vision = is_vision_model(model) and len(base64_images) > 0
+
+    if use_vision:
+        # Perform RAG retrieval for context alongside image details
+        context = retrieve_context(session_id, question, top_k=4)
+        
+        system_prompt = f"""You are a document analysis assistant. Answer the user question based on the provided context and images.
+If the answer cannot be found in the context or images, say "I cannot find the answer in the document."
+
+Context from document:
+{context}
+
+{lang_instruction}"""
+        messages = [{"role": "system", "content": system_prompt}]
+        
         chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
-        for msg in chat_history[-10:]:
+        # skip first greeting message in the system prompt context as it's just a welcome message
+        for msg in chat_history[1:-10] if len(chat_history) > 10 else chat_history[1:]:
             messages.append({"role": msg.role, "content": msg.content})
             
         messages.append({
             "role": "user",
-            "content": f"{question}\n\n{lang_instruction}",
-            "images": [session.base64_image]
+            "content": question,
+            "images": base64_images
         })
     else:
         # Perform RAG retrieval for documents or image-with-OCR fallback
@@ -191,3 +257,8 @@ def clear_doc_session(session_id):
         ChatMessage.query.filter(ChatMessage.session_id == session_id, ChatMessage.id != first_msg.id).delete()
     db.session.commit()
     return jsonify({"success": True})
+
+@doc_bp.route('/files/<filename>', methods=['GET'])
+def get_uploaded_file(filename):
+    upload_dir = current_app.config['UPLOAD_FOLDER']
+    return send_from_directory(upload_dir, filename)

@@ -16,6 +16,23 @@ class DocumentSession(db.Model):
     extracted_text = db.Column(db.Text, nullable=True)        # Backup/preview text
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Relationships
+    files = db.relationship('DocumentFile', backref='session', lazy=True, cascade="all, delete-orphan")
+
+class DocumentFile(db.Model):
+    __tablename__ = 'document_files'
+    
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    session_id = db.Column(db.String(36), db.ForeignKey('document_sessions.session_id'), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    filepath = db.Column(db.String(512), nullable=False)
+    file_type = db.Column(db.String(20), nullable=False)      # 'document', 'image'
+    base64_image = db.Column(db.Text, nullable=True)          # Stored for vision model
+    extracted_text = db.Column(db.Text, nullable=True)        # Backup/preview text
+    status = db.Column(db.String(50), default='processing')    # 'processing', 'ready', 'failed'
+    error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 class CodeSession(db.Model):
     __tablename__ = 'code_sessions'
     
