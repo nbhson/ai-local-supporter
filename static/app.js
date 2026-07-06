@@ -4,7 +4,21 @@ const state = {
     language: 'en', // Default to English
     doc: { sessionId: null, filename: null, model: null, isProcessing: false },
     code: { sessionId: null, codename: null, model: null, isProcessing: false },
-    chat: { sessionId: null, model: null, isProcessing: false }
+    chat: { sessionId: null, model: null, isProcessing: false },
+    project: {
+        sessionId: null,
+        path: null,
+        isLocal: false,
+        tree: null,
+        stats: null,
+        openFiles: {}, // { relPath: content }
+        activeFile: null,
+        selectedFiles: new Set(),
+        isProcessing: false,
+        diffOriginalContent: null,
+        diffProposedContent: null,
+        diffFilePath: null
+    }
 };
 
 // ===== DOM REFS =====
@@ -45,10 +59,45 @@ const chatQuickActions = $('chatQuickActions');
 const clearChatSessionBtn = $('clearChatSessionBtn');
 const chatStatus = $('chatStatus');
 
+// Project Tab DOM Refs
+const projectPathInput = $('projectPathInput');
+const openLocalProjectBtn = $('openLocalProjectBtn');
+const projectUploadArea = $('projectUploadArea');
+const projectFolderInput = $('projectFolderInput');
+const projectExplorerSection = $('projectExplorerSection');
+const projectTreeContainer = $('projectTreeContainer');
+const closeProjectBtn = $('closeProjectBtn');
+const reloadProjectBtn = $('reloadProjectBtn');
+const projectWorkspaceContainer = $('projectWorkspaceContainer');
+const projectWelcome = $('projectWelcome');
+const editorTabsBar = $('editorTabsBar');
+const projectDashboard = $('projectDashboard');
+const editorActiveView = $('editorActiveView');
+const activeFileTitle = $('activeFileTitle');
+const saveActiveFileBtn = $('saveActiveFileBtn');
+const editorLineNumbers = $('editorLineNumbers');
+const monacoEditorContainer = $('monacoEditorContainer');
+const editorDiffView = $('editorDiffView');
+const discardDiffBtn = $('discardDiffBtn');
+const acceptDiffBtn = $('acceptDiffBtn');
+const diffContainerViewport = $('diffContainerViewport');
+const projectChatMessages = $('projectChatMessages');
+const workspaceContextBar = $('workspaceContextBar');
+const workspaceContextCount = $('workspaceContextCount');
+const contextFilesTags = $('contextFilesTags');
+const projectChatInput = $('projectChatInput');
+const projectSendBtn = $('projectSendBtn');
+const statTotalFiles = $('statTotalFiles');
+const statTotalSize = $('statTotalSize');
+const statMainLang = $('statMainLang');
+const langsProgressContainer = $('langsProgressContainer');
+const dashboardPathLabel = $('dashboardPathLabel');
+
 // ===== INIT =====
 async function init() {
     await loadModels();
     setupEventListeners();
+    initProjectWorkspace();
     updateUILanguage(); // Set default language on page load
 }
 
@@ -107,6 +156,10 @@ async function switchTab(tab) {
 
 function updateChatInput() {
     const tab = state.activeTab;
+    if (tab === 'project') {
+        chatInputContainer.style.display = 'none';
+        return;
+    }
     const s = tab === 'doc' ? state.doc : (tab === 'code' ? state.code : state.chat);
     const hasSession = tab === 'chat' ? !!state.chat.sessionId : (tab === 'doc' ? !!state.doc.sessionId : !!state.code.sessionId);
     const t = translations[state.language];
@@ -707,6 +760,7 @@ const translations = {
         docTab: 'Documents',
         codeTab: 'Code',
         chatTab: 'Chat',
+        projectTab: 'Projects',
         pasteCode: 'Paste your code here',
         analyzeCode: 'Analyze Code',
         analyzingCode: '⏳ Analyzing...',
@@ -723,7 +777,9 @@ const translations = {
         welcomeCode: 'Code Analysis',
         welcomeCodeDesc: 'Paste code in sidebar to analyze and ask questions',
         welcomeChat: 'Free Chat',
-        welcomeChatDesc: 'Ask anything you want with AI'
+        welcomeChatDesc: 'Ask anything you want with AI',
+        welcomeProject: 'Project Workspace',
+        welcomeProjectDesc: 'Open or upload a folder to browse and generate code'
     },
     vi: {
         uploadText: 'Kéo thả file vào đây',
@@ -736,6 +792,7 @@ const translations = {
         docTab: 'Tài liệu',
         codeTab: 'Code',
         chatTab: 'Trò chuyện',
+        projectTab: 'Dự án',
         pasteCode: 'Dán code của bạn vào đây',
         analyzeCode: 'Phân tích Code',
         analyzingCode: '⏳ Đang phân tích...',
@@ -752,7 +809,9 @@ const translations = {
         welcomeCode: 'Phân tích Code',
         welcomeCodeDesc: 'Dán code vào sidebar để phân tích và đặt câu hỏi',
         welcomeChat: 'Trò chuyện tự do',
-        welcomeChatDesc: 'Hỏi bất cứ điều gì bạn muốn với AI'
+        welcomeChatDesc: 'Hỏi bất cứ điều gì bạn muốn với AI',
+        welcomeProject: 'Không gian Dự án',
+        welcomeProjectDesc: 'Mở hoặc upload một thư mục để duyệt code và sinh code'
     }
 };
 
@@ -769,6 +828,8 @@ function updateUILanguage() {
     document.querySelector('[data-tab="doc"] .tab-label').textContent = t.docTab;
     document.querySelector('[data-tab="code"] .tab-label').textContent = t.codeTab;
     document.querySelector('[data-tab="chat"] .tab-label').textContent = t.chatTab;
+    const projectTabBtn = document.querySelector('[data-tab="project"] .tab-label');
+    if (projectTabBtn) projectTabBtn.textContent = t.projectTab;
 
     // Update code section
     document.querySelector('.code-textarea').placeholder = t.pasteCode;
@@ -781,6 +842,11 @@ function updateUILanguage() {
     document.querySelector('#codeWelcome p').textContent = t.welcomeCodeDesc;
     document.querySelector('#chatWelcome h2').textContent = t.welcomeChat;
     document.querySelector('#chatWelcome p').textContent = t.welcomeChatDesc;
+
+    const projWelcomeH2 = document.querySelector('#projectWelcome h2');
+    const projWelcomeP = document.querySelector('#projectWelcome p');
+    if (projWelcomeH2) projWelcomeH2.textContent = t.welcomeProject;
+    if (projWelcomeP) projWelcomeP.textContent = t.welcomeProjectDesc;
 
     // Update chat input placeholder
     updateChatInput();
@@ -876,6 +942,999 @@ document.addEventListener('keydown', (e) => {
         closeModal();
     }
 });
+
+// ===== PROJECT WORKSPACE FUNCTIONS =====
+
+function initProjectWorkspace() {
+    // Project local path open click
+    openLocalProjectBtn.addEventListener('click', openLocalProject);
+    projectPathInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') openLocalProject();
+    });
+
+    // Close project session
+    closeProjectBtn.addEventListener('click', closeProjectSession);
+
+    // Reload project session
+    if (reloadProjectBtn) {
+        reloadProjectBtn.addEventListener('click', async () => {
+            const reloadIcon = reloadProjectBtn.querySelector('.material-symbols-rounded');
+            if (reloadIcon) reloadIcon.classList.add('spinning');
+            reloadProjectBtn.disabled = true;
+
+            try {
+                await reloadProjectWorkspace();
+                showToast('🔄', state.language === 'vi' ? 'Đã cập nhật dự án.' : 'Project updated.');
+            } catch (e) {
+                showToast('❌', state.language === 'vi' ? 'Lỗi tải lại: ' + e.message : 'Reload error: ' + e.message);
+            } finally {
+                if (reloadIcon) reloadIcon.classList.remove('spinning');
+                reloadProjectBtn.disabled = false;
+            }
+        });
+    }
+
+    // Save active file click
+    saveActiveFileBtn.addEventListener('click', saveActiveFile);
+
+    // Monaco Editor handles scrolling and input change events internally
+
+    // Chat sending
+    projectSendBtn.addEventListener('click', sendProjectMessage);
+    projectChatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendProjectMessage();
+        }
+    });
+
+    // Diff controls
+    discardDiffBtn.addEventListener('click', () => {
+        editorDiffView.style.display = 'none';
+        editorActiveView.style.display = 'flex';
+    });
+    acceptDiffBtn.addEventListener('click', async () => {
+        if (state.project.diffProposedContent && state.project.diffFilePath) {
+            const proposed = state.project.diffProposedContent;
+            const path = state.project.diffFilePath;
+
+            try {
+                const res = await fetch(`/api/project/${state.project.sessionId}/write_file`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: path, content: proposed })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    state.project.openFiles[path] = proposed;
+                    if (state.project.activeFile === path && monacoEditor) {
+                        monacoEditor.setValue(proposed);
+                    }
+                    showToast('✅', state.language === 'vi' ? 'Đã áp dụng thay đổi thành công!' : 'Successfully applied changes!');
+                    editorDiffView.style.display = 'none';
+                    editorActiveView.style.display = 'flex';
+                } else {
+                    showToast('❌', data.error);
+                }
+            } catch (e) {
+                showToast('❌', 'Error writing file: ' + e.message);
+            }
+        }
+    });
+}
+
+async function openLocalProject() {
+    const path = projectPathInput.value.trim();
+    if (!path) {
+        showToast('⚠️', state.language === 'vi' ? 'Vui lòng nhập đường dẫn thư mục.' : 'Please enter directory path.');
+        return;
+    }
+
+    openLocalProjectBtn.disabled = true;
+    openLocalProjectBtn.textContent = state.language === 'vi' ? 'Đang mở...' : 'Opening...';
+
+    try {
+        const res = await fetch('/api/project/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: path,
+                model: modelSelect.value,
+                language: state.language
+            })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to open project');
+
+        state.project.sessionId = data.session_id;
+        state.project.path = path;
+        state.project.isLocal = true;
+        state.project.tree = data.tree;
+        state.project.stats = data.stats;
+        state.project.openFiles = {};
+        state.project.activeFile = null;
+        state.project.selectedFiles.clear();
+
+        // UI toggles
+        document.querySelector('.project-sidebar-section').style.display = 'none';
+        projectExplorerSection.style.display = 'flex';
+        projectWelcome.style.display = 'none';
+        projectWorkspaceContainer.style.display = 'flex';
+
+        // Render Tree & Dashboard
+        renderProjectTree(data.tree, projectTreeContainer);
+        renderProjectDashboard(data.stats, path);
+        updateContextBar();
+
+        showToast('✅', state.language === 'vi' ? 'Đã mở dự án thành công!' : 'Project opened successfully!');
+    } catch (err) {
+        showToast('❌', err.message);
+    } finally {
+        openLocalProjectBtn.disabled = false;
+        openLocalProjectBtn.innerHTML = `<span class="material-symbols-rounded" style="font-size: 1.1rem !important;">folder</span> ${state.language === 'vi' ? 'Mở cục bộ' : 'Open Local'}`;
+    }
+}
+
+
+
+function closeProjectSession() {
+    state.project.sessionId = null;
+    state.project.path = null;
+    state.project.tree = null;
+    state.project.stats = null;
+    state.project.openFiles = {};
+    state.project.activeFile = null;
+    state.project.selectedFiles.clear();
+
+    document.querySelector('.project-sidebar-section').style.display = 'block';
+    projectExplorerSection.style.display = 'none';
+    projectWorkspaceContainer.style.display = 'none';
+    projectWelcome.style.display = 'flex';
+    projectPathInput.value = '';
+    projectFolderInput.value = '';
+    projectChatMessages.innerHTML = '';
+
+    showToast('🔄', state.language === 'vi' ? 'Đã đóng dự án.' : 'Project workspace closed.');
+}
+
+// Recursively render VSCode style directory tree
+function renderProjectTree(nodes, container, depth = 0) {
+    if (depth === 0) container.innerHTML = '';
+
+    if (nodes.length === 0 && depth === 0) {
+        container.innerHTML = `<div style="padding: 12px; color: var(--text-muted); font-style: italic; font-size: 0.82rem; text-align: center;">
+            ${state.language === 'vi' ? 'Thư mục trống' : 'Empty directory'}
+        </div>`;
+        return;
+    }
+
+    const ul = document.createElement('ul');
+    ul.style.listStyle = 'none';
+    ul.style.paddingLeft = depth === 0 ? '0' : '10px';
+
+    nodes.forEach(node => {
+        const li = document.createElement('li');
+        li.style.margin = '2px 0';
+
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'tree-item';
+        itemDiv.dataset.path = node.path;
+
+        // Add indent line representation
+        itemDiv.style.paddingLeft = `${depth * 6}px`;
+
+        if (node.is_dir) {
+            const arrow = document.createElement('span');
+            arrow.className = 'material-symbols-rounded tree-arrow';
+            arrow.textContent = 'chevron_right';
+
+            const icon = document.createElement('span');
+            icon.className = 'material-symbols-rounded tree-icon folder';
+            icon.textContent = 'folder';
+
+            const name = document.createElement('span');
+            name.textContent = node.name;
+
+            itemDiv.appendChild(arrow);
+            itemDiv.appendChild(icon);
+            itemDiv.appendChild(name);
+            li.appendChild(itemDiv);
+
+            // Children list container
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'tree-folder-children';
+
+            itemDiv.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isExpanded = childrenContainer.classList.toggle('expanded');
+                arrow.classList.toggle('expanded', isExpanded);
+                icon.textContent = isExpanded ? 'folder_open' : 'folder';
+            });
+
+            renderProjectTree(node.children || [], childrenContainer, depth + 1);
+            li.appendChild(childrenContainer);
+        } else {
+            // Checkbox for multi-file context selection
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'tree-checkbox';
+            checkbox.checked = state.project.selectedFiles.has(node.path);
+
+            checkbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (checkbox.checked) {
+                    state.project.selectedFiles.add(node.path);
+                } else {
+                    state.project.selectedFiles.delete(node.path);
+                }
+                updateContextBar();
+            });
+
+            const icon = document.createElement('span');
+            icon.className = 'material-symbols-rounded tree-icon file';
+            const ext = node.name.split('.').pop().toLowerCase();
+            icon.dataset.ext = ext;
+
+            // Assign specific file icon
+            if (['py', 'js', 'ts', 'go', 'rs', 'cpp', 'c', 'sh', 'bat'].includes(ext)) {
+                icon.textContent = 'code';
+            } else if (['json', 'yaml', 'yml', 'xml', 'toml'].includes(ext)) {
+                icon.textContent = 'settings';
+            } else if (['md', 'txt', 'rtf'].includes(ext)) {
+                icon.textContent = 'description';
+            } else if (['png', 'jpg', 'jpeg', 'svg', 'gif'].includes(ext)) {
+                icon.textContent = 'image';
+            } else {
+                icon.textContent = 'draft';
+            }
+
+            const name = document.createElement('span');
+            name.textContent = node.name;
+
+            itemDiv.appendChild(checkbox);
+            itemDiv.appendChild(icon);
+            itemDiv.appendChild(name);
+            li.appendChild(itemDiv);
+
+            itemDiv.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openProjectFile(node.path);
+            });
+        }
+
+        ul.appendChild(li);
+    });
+
+    container.appendChild(ul);
+}
+
+function renderProjectDashboard(stats, path) {
+    dashboardPathLabel.textContent = `Workspace Path: ${path}`;
+    statTotalFiles.textContent = stats.total_files;
+
+    // Format size
+    const size = stats.total_size;
+    if (size > 1024 * 1024) {
+        statTotalSize.textContent = (size / (1024 * 1024)).toFixed(2) + ' MB';
+    } else {
+        statTotalSize.textContent = (size / 1024).toFixed(1) + ' KB';
+    }
+
+    // Determine primary language
+    let primary = 'None';
+    let maxCount = 0;
+    let totalCodeFiles = 0;
+
+    Object.entries(stats.lang_stats).forEach(([lang, count]) => {
+        totalCodeFiles += count;
+        if (count > maxCount) {
+            maxCount = count;
+            primary = lang.toUpperCase();
+        }
+    });
+    statMainLang.textContent = primary;
+
+    // Render Lang Progress Bar
+    langsProgressContainer.innerHTML = '';
+    const legendGrid = document.createElement('div');
+    legendGrid.className = 'langs-legend';
+
+    const colors = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6b7280'];
+
+    if (totalCodeFiles === 0) {
+        langsProgressContainer.style.height = 'auto';
+        langsProgressContainer.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic; width:100%; text-align:center; padding: 4px 0;">
+            ${state.language === 'vi' ? 'Không có tệp tin lập trình' : 'No programming files found'}
+        </div>`;
+        const oldLegend = projectDashboard.querySelector('.langs-legend');
+        if (oldLegend) oldLegend.remove();
+        return;
+    }
+
+    // Sort and get top languages
+    const sortedLangs = Object.entries(stats.lang_stats)
+        .sort((a, b) => b[1] - a[1]);
+
+    let renderedPct = 0;
+    sortedLangs.slice(0, 5).forEach(([lang, count], idx) => {
+        const pct = ((count / totalCodeFiles) * 100).toFixed(1);
+        renderedPct += parseFloat(pct);
+        const color = colors[idx % colors.length];
+
+        const bar = document.createElement('div');
+        bar.className = 'lang-bar';
+        bar.style.width = `${pct}%`;
+        bar.style.background = color;
+        bar.title = `${lang.toUpperCase()}: ${pct}%`;
+        langsProgressContainer.appendChild(bar);
+
+        // Legend Item
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `
+            <span class="legend-color" style="background: ${color}"></span>
+            <span style="font-weight:600">${lang.toUpperCase()}</span>
+            <span style="color:var(--text-muted)">${pct}%</span>
+        `;
+        legendGrid.appendChild(item);
+    });
+
+    // Add other category if needed
+    if (sortedLangs.length > 5) {
+        const otherPct = (100 - renderedPct).toFixed(1);
+        if (otherPct > 0) {
+            const bar = document.createElement('div');
+            bar.className = 'lang-bar';
+            bar.style.width = `${otherPct}%`;
+            bar.style.background = colors[6];
+            bar.title = `Other: ${otherPct}%`;
+            langsProgressContainer.appendChild(bar);
+
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.innerHTML = `
+                <span class="legend-color" style="background: ${colors[6]}"></span>
+                <span style="font-weight:600">Other</span>
+                <span style="color:var(--text-muted)">${otherPct}%</span>
+            `;
+            legendGrid.appendChild(item);
+        }
+    }
+
+    const oldLegend = projectDashboard.querySelector('.langs-legend');
+    if (oldLegend) oldLegend.remove();
+    projectDashboard.querySelector('.dashboard-langs-section').appendChild(legendGrid);
+}
+
+function updateContextBar() {
+    const count = state.project.selectedFiles.size;
+    workspaceContextCount.textContent = count === 1 ? '1 file context' : `${count} files context`;
+
+    contextFilesTags.innerHTML = '';
+    state.project.selectedFiles.forEach(path => {
+        const tag = document.createElement('div');
+        tag.className = 'context-tag';
+        tag.innerHTML = `
+            <span>${path.split('/').pop()}</span>
+            <span class="material-symbols-rounded context-tag-remove">close</span>
+        `;
+        tag.querySelector('.context-tag-remove').addEventListener('click', () => {
+            state.project.selectedFiles.delete(path);
+            // Sync tree checkbox if visible
+            const treeItemCheckbox = projectTreeContainer.querySelector(`.tree-item[data-path="${path}"] .tree-checkbox`);
+            if (treeItemCheckbox) treeItemCheckbox.checked = false;
+            updateContextBar();
+        });
+        contextFilesTags.appendChild(tag);
+    });
+}
+
+let monacoEditor = null;
+let monacoLoaded = false;
+
+function loadMonaco(callback) {
+    if (monacoLoaded) {
+        if (callback) callback();
+        return;
+    }
+    if (window.require) {
+        require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.39.0/min/vs' } });
+        require(['vs/editor/editor.main'], function() {
+            monacoLoaded = true;
+            console.log("Monaco Editor loaded successfully!");
+            if (callback) callback();
+        });
+    }
+}
+
+function updateMonacoEditor(content, filepath) {
+    const ext = filepath.split('.').pop().toLowerCase();
+    let lang = 'plaintext';
+    if (ext === 'py') lang = 'python';
+    else if (ext === 'js') lang = 'javascript';
+    else if (ext === 'ts') lang = 'typescript';
+    else if (ext === 'html' || ext === 'htm') lang = 'html';
+    else if (ext === 'css') lang = 'css';
+    else if (ext === 'json') lang = 'json';
+    else if (ext === 'md') lang = 'markdown';
+    else if (ext === 'cpp' || ext === 'h') lang = 'cpp';
+    else if (ext === 'go') lang = 'go';
+    else if (ext === 'rs') lang = 'rust';
+    else if (ext === 'sh') lang = 'shell';
+
+    if (!monacoLoaded) {
+        loadMonaco(() => {
+            updateMonacoEditor(content, filepath);
+        });
+        return;
+    }
+
+    if (!monacoEditor) {
+        monacoEditor = monaco.editor.create(document.getElementById('monacoEditorContainer'), {
+            value: content,
+            language: lang,
+            theme: 'vs-dark',
+            automaticLayout: true,
+            fontSize: 13,
+            fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
+            lineHeight: 20,
+            minimap: { enabled: false }
+        });
+        
+        monacoEditor.onDidChangeModelContent(() => {
+            if (state.project.activeFile) {
+                state.project.openFiles[state.project.activeFile] = monacoEditor.getValue();
+            }
+        });
+    } else {
+        const model = monaco.editor.createModel(content, lang);
+        monacoEditor.setModel(model);
+    }
+}
+
+async function openProjectFile(relPath) {
+    // Check if we need to load it
+    if (state.project.openFiles[relPath] === undefined) {
+        try {
+            const res = await fetch(`/api/project/${state.project.sessionId}/file?path=${encodeURIComponent(relPath)}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to read file');
+            state.project.openFiles[relPath] = data.content;
+        } catch (e) {
+            showToast('❌', e.message);
+            return;
+        }
+    }
+
+    state.project.activeFile = relPath;
+
+    // Highlight explorer node
+    projectTreeContainer.querySelectorAll('.tree-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.path === relPath);
+    });
+
+    // Populate editor & tabs
+    renderTabs();
+    projectDashboard.style.display = 'none';
+    editorDiffView.style.display = 'none';
+    editorActiveView.style.display = 'flex';
+
+    activeFileTitle.textContent = relPath;
+    updateMonacoEditor(state.project.openFiles[relPath], relPath);
+}
+
+function renderTabs() {
+    editorTabsBar.innerHTML = '';
+    const openPaths = Object.keys(state.project.openFiles);
+
+    if (openPaths.length === 0) {
+        editorActiveView.style.display = 'none';
+        projectDashboard.style.display = 'flex';
+        state.project.activeFile = null;
+        return;
+    }
+
+    openPaths.forEach(path => {
+        const tab = document.createElement('div');
+        tab.className = `editor-tab ${state.project.activeFile === path ? 'active' : ''}`;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = path.split('/').pop();
+
+        const closeIcon = document.createElement('span');
+        closeIcon.className = 'material-symbols-rounded tab-close';
+        closeIcon.textContent = 'close';
+
+        tab.appendChild(nameSpan);
+        tab.appendChild(closeIcon);
+
+        tab.addEventListener('click', () => openProjectFile(path));
+        closeIcon.addEventListener('click', (e) => {
+            e.stopPropagation();
+            delete state.project.openFiles[path];
+            if (state.project.activeFile === path) {
+                const keys = Object.keys(state.project.openFiles);
+                if (keys.length > 0) {
+                    openProjectFile(keys[keys.length - 1]);
+                } else {
+                    renderTabs();
+                }
+            } else {
+                renderTabs();
+            }
+        });
+
+        editorTabsBar.appendChild(tab);
+    });
+}
+
+function updateLineNumbers() {
+    // Monaco handles its own line numbers
+}
+
+async function saveActiveFile() {
+    const path = state.project.activeFile;
+    if (!path) return;
+
+    const content = monacoEditor ? monacoEditor.getValue() : '';
+    saveActiveFileBtn.disabled = true;
+    saveActiveFileBtn.innerHTML = `<span class="material-symbols-rounded spinning" style="font-size:0.95rem !important">progress_activity</span> ${state.language === 'vi' ? 'Đang lưu...' : 'Saving...'}`;
+
+    try {
+        const res = await fetch(`/api/project/${state.project.sessionId}/write_file`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: path,
+                content: content
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            state.project.openFiles[path] = content;
+            showToast('✅', state.language === 'vi' ? 'Đã lưu file thành công!' : 'File saved successfully!');
+        } else {
+            showToast('❌', data.error || 'Error saving file');
+        }
+    } catch (e) {
+        showToast('❌', 'Error: ' + e.message);
+    } finally {
+        saveActiveFileBtn.disabled = false;
+        saveActiveFileBtn.innerHTML = `<span class="material-symbols-rounded" style="font-size:0.95rem !important">save</span> ${state.language === 'vi' ? 'Lưu' : 'Save'}`;
+    }
+}
+
+// Diff Engine: Simple LCS line diff
+function diffLines(oldStr, newStr) {
+    const oldLines = oldStr.split('\n');
+    const newLines = newStr.split('\n');
+    const M = oldLines.length;
+    const N = newLines.length;
+
+    const dp = Array.from({ length: M + 1 }, () => Array(N + 1).fill(0));
+    for (let i = 1; i <= M; i++) {
+        for (let j = 1; j <= N; j++) {
+            if (oldLines[i - 1] === newLines[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+    let i = M, j = N;
+    const result = [];
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+            result.unshift({ type: 'unchanged', text: oldLines[i - 1], oldLine: i, newLine: j });
+            i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            result.unshift({ type: 'added', text: newLines[j - 1], newLine: j });
+            j--;
+        } else {
+            result.unshift({ type: 'removed', text: oldLines[i - 1], oldLine: i });
+            i--;
+        }
+    }
+    return result;
+}
+
+// Markdown parser & Proposed Code block extractor for Project Chat
+let proposedBlocks = [];
+
+function formatProjectMessage(text) {
+    if (!text) return "";
+    proposedBlocks = [];
+
+    let formatted = text;
+
+    // 1. Extract thought process first
+    formatted = formatted.replace(/<think>([\s\S]*?)<\/think>/g, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded">psychology</span> Thought Process</div><div class="thought-content">$1</div></div>');
+    if (formatted.includes('<think>') && !formatted.includes('</think>')) {
+        formatted = formatted.replace(/<think>([\s\S]*)/, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded spinning">progress_activity</span> Thinking...</div><div class="thought-content">$1</div></div>');
+    }
+
+    const snapshotActiveFile = state.project.activeFile;
+
+    // Helpers for file detection
+    const getAllProjectFiles = (nodes = state.project.tree) => {
+        if (!nodes) return [];
+        let files = [];
+        nodes.forEach(node => {
+            if (node.is_dir) {
+                files = files.concat(getAllProjectFiles(node.children));
+            } else {
+                files.push(node.path);
+            }
+        });
+        return files;
+    };
+
+    const detectFilepathFromText = (textBeforeCode) => {
+        if (!textBeforeCode) return null;
+        const allFiles = getAllProjectFiles();
+        if (allFiles.length === 0) return null;
+
+        const sortedFiles = [...allFiles].sort((a, b) => b.length - a.length);
+
+        for (const filepath of sortedFiles) {
+            if (textBeforeCode.toLowerCase().includes(filepath.toLowerCase())) {
+                return filepath;
+            }
+        }
+
+        for (const filepath of sortedFiles) {
+            const filename = filepath.split('/').pop();
+            const escapedName = filename.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`(\\b|[\`"'])${escapedName}(\\b|[\`"'])`, 'i');
+            if (regex.test(textBeforeCode)) {
+                return filepath;
+            }
+        }
+        return null;
+    };
+
+    // 2. Parse and extract all code blocks sequentially using placeholders
+    const placeholders = [];
+    const codeBlockRegex = /(?:\[(CREATE_FILE|MODIFY_FILE):\s*([^\s\]]+)\]\s*)?```(\w*)\n([\s\S]*?)```/g;
+
+    formatted = formatted.replace(codeBlockRegex, (match, tagType, tagPath, lang, code, offset) => {
+        const placeholderId = `__CODE_BLOCK_PLACEHOLDER_${placeholders.length}__`;
+
+        let action = 'modify';
+        let targetPath = null;
+
+        if (tagType) {
+            action = tagType.toLowerCase();
+            targetPath = tagPath;
+        } else {
+            // Auto detect from preceding text
+            const textBefore = formatted.substring(Math.max(0, offset - 350), offset);
+            const detectedPath = detectFilepathFromText(textBefore);
+            targetPath = detectedPath || snapshotActiveFile;
+        }
+
+        const blockIndex = proposedBlocks.length;
+        proposedBlocks.push({ action: action, path: targetPath, content: code });
+
+        const escapedCode = code
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        let actionHtml = "";
+        if (action === 'create') {
+            actionHtml = `<div class="ai-code-action-bar">
+                <span class="ai-code-tag-title create">
+                    <span class="material-symbols-rounded">add_circle</span> ${state.language === 'vi' ? 'Tạo file:' : 'Create file:'} <code>${targetPath}</code>
+                </span>
+                <button class="btn-code-action btn-apply-direct" onclick="createProposedFile(${blockIndex})">
+                    <span class="material-symbols-rounded">create_new_folder</span> ${state.language === 'vi' ? 'Tạo file' : 'Create'}
+                </button>
+            </div>`;
+        } else {
+            actionHtml = targetPath ? `
+                <div class="ai-code-action-bar">
+                    <span class="ai-code-tag-title modify">
+                        <span class="material-symbols-rounded">edit</span> ${state.language === 'vi' ? 'Sửa file:' : 'Modify file:'} <code>${targetPath.split('/').pop()}</code>
+                    </span>
+                    <div style="display: flex; gap: 6px;">
+                        <button class="btn-code-action" onclick="compareProposedCode(${blockIndex})">
+                            <span class="material-symbols-rounded">compare</span> ${state.language === 'vi' ? 'So sánh' : 'Compare'}
+                        </button>
+                        <button class="btn-code-action btn-apply-direct" onclick="applyProposedCode(${blockIndex})">
+                            <span class="material-symbols-rounded">check</span> ${state.language === 'vi' ? 'Áp dụng' : 'Apply'}
+                        </button>
+                    </div>
+                </div>
+            ` : `
+                <div class="ai-code-action-bar">
+                    <span style="font-size: 0.72rem; color: var(--text-muted); font-style: italic;">
+                        ${state.language === 'vi' ? 'Chưa chọn file áp dụng' : 'No target file selected'}
+                    </span>
+                </div>
+            `;
+        }
+
+        const htmlBlock = `<div class="code-block-wrapper" style="margin-top: 10px;">
+            ${actionHtml}
+            <div class="code-header">
+                <span>${lang || 'code'}</span>
+                <button class="copy-code-btn" onclick="copyCodeToClipboard(this)" data-code="${escapedCode}" title="Copy Code">
+                    <span class="material-symbols-rounded">content_copy</span>
+                </button>
+            </div>
+            <pre><code>${code}</code></pre>
+        </div>`;
+
+        placeholders.push({ id: placeholderId, html: htmlBlock });
+        return placeholderId;
+    });
+
+    // 3. Apply standard markdown formatting safely
+    formatted = formatted
+        .replace(/`(.*?)`/g, '<code>$1</code>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br>');
+
+    // 4. Restore original code blocks
+    placeholders.forEach(placeholder => {
+        formatted = formatted.replace(placeholder.id, placeholder.html);
+    });
+
+    return formatted;
+}
+
+window.compareProposedCode = async (index) => {
+    const item = proposedBlocks[index];
+    if (!item || !item.path) {
+        showToast('⚠️', state.language === 'vi' ? 'Không xác định được tệp tin cần so sánh.' : 'Could not identify target file.');
+        return;
+    }
+    const filepath = item.path;
+
+    // If file content is not loaded yet, fetch it from server
+    if (!state.project.openFiles[filepath]) {
+        try {
+            const res = await fetch(`/api/project/${state.project.sessionId}/file?path=${encodeURIComponent(filepath)}`);
+            const data = await res.json();
+            if (res.ok) {
+                state.project.openFiles[filepath] = data.content;
+            } else {
+                state.project.openFiles[filepath] = "";
+            }
+        } catch (e) {
+            state.project.openFiles[filepath] = "";
+        }
+    }
+
+    // Auto-open target file as active in Editor
+    await openProjectFile(filepath);
+
+    const original = state.project.openFiles[filepath] || "";
+    const proposed = item.content;
+
+    state.project.diffOriginalContent = original;
+    state.project.diffProposedContent = proposed;
+    state.project.diffFilePath = filepath;
+
+    const diffResult = diffLines(original, proposed);
+
+    diffContainerViewport.innerHTML = "";
+    diffResult.forEach(line => {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = `diff-line ${line.type}`;
+
+        const numSpan = document.createElement('span');
+        numSpan.className = 'diff-line-num';
+        numSpan.textContent = line.type === 'added' ? `+` : (line.type === 'removed' ? `-` : line.oldLine);
+
+        const contentSpan = document.createElement('span');
+        contentSpan.className = 'diff-line-content';
+        contentSpan.textContent = line.text;
+
+        lineDiv.appendChild(numSpan);
+        lineDiv.appendChild(contentSpan);
+        diffContainerViewport.appendChild(lineDiv);
+    });
+
+    editorActiveView.style.display = 'none';
+    projectDashboard.style.display = 'none';
+    editorDiffView.style.display = 'flex';
+};
+
+window.applyProposedCode = async (index) => {
+    const item = proposedBlocks[index];
+    if (!item || !item.path) {
+        showToast('⚠️', state.language === 'vi' ? 'Không xác định được tệp tin cần áp dụng.' : 'Could not identify target file.');
+        return;
+    }
+    const filepath = item.path;
+    const proposed = item.content;
+
+    try {
+        const res = await fetch(`/api/project/${state.project.sessionId}/write_file`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: filepath,
+                content: proposed
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            state.project.openFiles[filepath] = proposed;
+
+            // Auto open file in Editor to show changes
+            await openProjectFile(filepath);
+
+            showToast('✅', state.language === 'vi' ? `Đã áp dụng thay đổi cho file ${filepath}!` : `Applied changes to ${filepath} successfully!`);
+        } else {
+            showToast('❌', data.error || 'Error writing file');
+        }
+    } catch (e) {
+        showToast('❌', 'Error writing file: ' + e.message);
+    }
+};
+
+window.createProposedFile = async (index) => {
+    const item = proposedBlocks[index];
+    if (!item || item.action !== 'create') return;
+
+    try {
+        const res = await fetch(`/api/project/${state.project.sessionId}/write_file`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: item.path,
+                content: item.content
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('✅', state.language === 'vi' ? `Đã tạo file ${item.path} thành công!` : `File ${item.path} created successfully!`);
+
+            // Reload project tree & stats
+            await reloadProjectWorkspace();
+
+            // Open the new file
+            await openProjectFile(item.path);
+        } else {
+            showToast('❌', data.error || 'Error creating file');
+        }
+    } catch (e) {
+        showToast('❌', 'Error: ' + e.message);
+    }
+};
+
+async function reloadProjectWorkspace() {
+    if (!state.project.sessionId) return;
+    try {
+        const res = await fetch(`/api/project/${state.project.sessionId}/scan`);
+        const data = await res.json();
+        if (res.ok) {
+            state.project.tree = data.tree;
+            state.project.stats = data.stats;
+            renderProjectTree(data.tree, projectTreeContainer);
+            renderProjectDashboard(data.stats, state.project.path);
+        }
+    } catch (e) {
+        console.error("Error reloading workspace:", e);
+    }
+}
+
+function addProjectChatMessage(role, content) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}`;
+    msgDiv.innerHTML = `
+        <div class="message-avatar"><span class="material-symbols-rounded">${role === 'assistant' ? 'smart_toy' : 'person'}</span></div>
+        <div class="message-bubble">${formatProjectMessage(content)}</div>
+    `;
+    projectChatMessages.appendChild(msgDiv);
+    projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
+}
+
+// Send streaming message for Project Workspace Chat
+async function sendProjectMessage() {
+    const question = projectChatInput.value.trim();
+    if (!question || state.project.isProcessing || !state.project.sessionId) return;
+
+    state.project.isProcessing = true;
+    projectChatInput.disabled = true;
+    projectSendBtn.disabled = true;
+
+    addProjectChatMessage('user', question);
+    projectChatInput.value = '';
+    projectChatInput.style.height = 'auto'; // Reset text area size
+
+    showTypingIndicator(projectChatMessages);
+
+    try {
+        const res = await fetch(`/api/project/${state.project.sessionId}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                question: question,
+                active_file: state.project.activeFile || '',
+                selected_files: Array.from(state.project.selectedFiles),
+                model: modelSelect.value,
+                language: state.language
+            })
+        });
+
+        removeTypingIndicator();
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Chat failed');
+        }
+
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message assistant`;
+        msgDiv.innerHTML = `
+            <div class="message-avatar"><span class="material-symbols-rounded">smart_toy</span></div>
+            <div class="message-bubble"></div>
+        `;
+        projectChatMessages.appendChild(msgDiv);
+        const bubble = msgDiv.querySelector('.message-bubble');
+
+        // custom stream reader that formats with project message rules
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let fullText = "";
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const wasAtBottom = projectChatMessages.scrollHeight - projectChatMessages.scrollTop - projectChatMessages.clientHeight < 150;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.slice(6).trim();
+                    if (dataStr === '[DONE]') break;
+
+                    try {
+                        const data = JSON.parse(dataStr);
+                        if (data.content) {
+                            fullText += data.content;
+                            bubble.innerHTML = formatProjectMessage(fullText);
+                        } else if (data.error) {
+                            bubble.innerHTML = formatProjectMessage(`❌ **Lỗi:** ${data.error}`);
+                        }
+                    } catch (e) { }
+                }
+            }
+
+            if (wasAtBottom) {
+                projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
+            }
+        }
+
+        bubble.innerHTML = formatProjectMessage(fullText);
+        projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
+    } catch (err) {
+        removeTypingIndicator();
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message assistant`;
+        msgDiv.innerHTML = `
+            <div class="message-avatar"><span class="material-symbols-rounded">smart_toy</span></div>
+            <div class="message-bubble">${formatProjectMessage(`❌ **Lỗi:** ${err.message}`)}</div>
+        `;
+        projectChatMessages.appendChild(msgDiv);
+        showToast('❌', err.message);
+    } finally {
+        state.project.isProcessing = false;
+        projectChatInput.disabled = false;
+        projectSendBtn.disabled = false;
+        projectChatInput.focus();
+    }
+}
 
 // ===== START =====
 init();

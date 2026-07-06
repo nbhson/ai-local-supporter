@@ -67,6 +67,9 @@ source .venv/bin/activate
 # Nâng cấp pip và cài đặt các dependencies từ requirements.txt
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# hoặc
+python3 -m pip install -r requirements.txt
 ```
 
 ### 3. Cài đặt các model Ollama

@@ -52,6 +52,18 @@ class ChatSession(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class ProjectSession(db.Model):
+    __tablename__ = 'project_sessions'
+    
+    session_id = db.Column(db.String(36), primary_key=True)
+    project_path = db.Column(db.String(512), nullable=True)  # Absolute local path (if any)
+    is_local = db.Column(db.Boolean, default=False)          # True if workspace opened directly from local drive
+    status = db.Column(db.String(50), default='processing')  # 'processing', 'ready', 'failed'
+    model = db.Column(db.String(100), nullable=False)
+    ui_language = db.Column(db.String(10), default='en')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class ChatMessage(db.Model):
     __tablename__ = 'chat_messages'
     

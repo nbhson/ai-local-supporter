@@ -4,6 +4,7 @@ from flask import Flask, render_template, jsonify
 from blueprints.doc import doc_bp
 from blueprints.code import code_bp
 from blueprints.chat import chat_bp
+from blueprints.project import project_bp
 from services.database import db
 import config
 
@@ -30,6 +31,7 @@ with app.app_context():
 app.register_blueprint(doc_bp, url_prefix='/api/doc')
 app.register_blueprint(code_bp, url_prefix='/api/code')
 app.register_blueprint(chat_bp, url_prefix='/api/chat')
+app.register_blueprint(project_bp, url_prefix='/api/project')
 
 @app.route('/')
 def index():
