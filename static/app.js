@@ -88,6 +88,14 @@ async function switchTab(tab) {
     // Main content tabs
     document.querySelectorAll('.main-tab').forEach(c => c.classList.toggle('active', c.id === `main-tab-${tab}`));
 
+    // Close mobile sidebar on tab change
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = $('sidebarOverlay');
+    if (sidebar && overlay) {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('show');
+    }
+
     // Auto initialize chat session if switching to chat and no session exists
     if (tab === 'chat' && !state.chat.sessionId) {
         await initChatSession();
@@ -124,6 +132,23 @@ function updateChatInput() {
 
 // ===== EVENT LISTENERS =====
 function setupEventListeners() {
+    // Mobile sidebar toggle
+    const toggleBtn = $('mobileSidebarToggle');
+    const sidebarOverlay = $('sidebarOverlay');
+    const sidebar = document.querySelector('.sidebar');
+
+    if (toggleBtn && sidebarOverlay && sidebar) {
+        toggleBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+            sidebarOverlay.classList.toggle('show');
+        });
+
+        sidebarOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('show');
+        });
+    }
+
     // Tab switching
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));
