@@ -852,13 +852,13 @@ function openModal(imgUrl, caption) {
     if (modalImg && modalCaption && imageModal) {
         modalImg.src = imgUrl;
         modalCaption.textContent = caption;
-        imageModal.style.display = 'flex';
+        imageModal.classList.add('show');
     }
 }
 
 function closeModal() {
     if (imageModal && modalImg) {
-        imageModal.style.display = 'none';
+        imageModal.classList.remove('show');
         modalImg.src = '';
     }
 }
@@ -872,7 +872,7 @@ if (imageModal) {
     });
 }
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && imageModal && imageModal.style.display === 'flex') {
+    if (e.key === 'Escape' && imageModal && imageModal.classList.contains('show')) {
         closeModal();
     }
 });
