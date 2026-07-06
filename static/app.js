@@ -297,7 +297,7 @@ function addDocMessage(role, content) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     msgDiv.innerHTML = `
-        <div class="message-avatar">${role === 'assistant' ? '🤖' : '👤'}</div>
+        <div class="message-avatar"><span class="material-symbols-rounded">${role === 'assistant' ? 'smart_toy' : 'person'}</span></div>
         <div class="message-bubble">${formatMessage(content)}</div>
     `;
     docChatMessages.appendChild(msgDiv);
@@ -308,7 +308,7 @@ function addCodeMessage(role, content) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     msgDiv.innerHTML = `
-        <div class="message-avatar">${role === 'assistant' ? '🤖' : '👤'}</div>
+        <div class="message-avatar"><span class="material-symbols-rounded">${role === 'assistant' ? 'smart_toy' : 'person'}</span></div>
         <div class="message-bubble">${formatMessage(content)}</div>
     `;
     codeChatMessages.appendChild(msgDiv);
@@ -319,27 +319,66 @@ function formatMessage(text) {
     if (!text) return "";
     
     // Handle DeepSeek <think> tag
-    let formatted = text.replace(/<think>([\s\S]*?)<\/think>/g, '<div class="thought-process"><div class="thought-header">💭 Thought Process</div><div class="thought-content">$1</div></div>');
+    let formatted = text.replace(/<think>([\s\S]*?)<\/think>/g, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded">psychology</span> Thought Process</div><div class="thought-content">$1</div></div>');
     
     // Handle unclosed <think> tag during streaming
     if (formatted.includes('<think>') && !formatted.includes('</think>')) {
-        formatted = formatted.replace(/<think>([\s\S]*)/, '<div class="thought-process"><div class="thought-header">💭 Thinking...</div><div class="thought-content">$1</div></div>');
+        formatted = formatted.replace(/<think>([\s\S]*)/, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded spinning">progress_activity</span> Thinking...</div><div class="thought-content">$1</div></div>');
     }
 
+    // Handle code blocks with copy-code button
+    formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+        const escapedCode = code
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        return `<div class="code-block-wrapper">
+            <div class="code-header">
+                <span>${lang || 'code'}</span>
+                <button class="copy-code-btn" onclick="copyCodeToClipboard(this)" data-code="${escapedCode}" title="Copy Code">
+                    <span class="material-symbols-rounded">content_copy</span>
+                </button>
+            </div>
+            <pre><code>${code}</code></pre>
+        </div>`;
+    });
+
     return formatted
-        .replace(/```(\w*)\n([\s\S]*?)```/g, '<div class="code-block-wrapper"><div class="code-header">$1</div><pre><code>$2</code></pre></div>')
         .replace(/`(.*?)`/g, '<code>$1</code>')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
         .replace(/\n/g, '<br>');
 }
 
+// Global copy to clipboard function
+window.copyCodeToClipboard = (btn) => {
+    const code = btn.getAttribute('data-code');
+    const txt = document.createElement('textarea');
+    txt.innerHTML = code;
+    const decodedCode = txt.value;
+    
+    navigator.clipboard.writeText(decodedCode).then(() => {
+        const icon = btn.querySelector('.material-symbols-rounded');
+        icon.textContent = 'check';
+        btn.classList.add('copied');
+        showToast('✅', state.language === 'vi' ? 'Đã copy code vào clipboard!' : 'Copied code to clipboard!');
+        setTimeout(() => {
+            icon.textContent = 'content_copy';
+            btn.classList.remove('copied');
+        }, 2000);
+    }).catch(err => {
+        showToast('❌', 'Failed to copy: ' + err);
+    });
+};
+
 function showTypingIndicator(target) {
     const el = document.createElement('div');
     el.className = 'message assistant typing';
     el.id = 'typingIndicator';
     el.innerHTML = `
-        <div class="message-avatar">🤖</div>
+        <div class="message-avatar"><span class="material-symbols-rounded">smart_toy</span></div>
         <div class="message-bubble typing-bubble">
             <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         </div>
@@ -403,7 +442,8 @@ async function analyzeCode() {
         showToast('❌', err.message);
     } finally {
         analyzeCodeBtn.disabled = false;
-        analyzeCodeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> Phân tích Code`;
+        const t = translations[state.language];
+        analyzeCodeBtn.innerHTML = `<span class="material-symbols-rounded btn-icon-left">analytics</span> ${t.analyzeCode}`;
     }
 }
 
@@ -456,7 +496,7 @@ async function sendMessage() {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message assistant`;
         msgDiv.innerHTML = `
-            <div class="message-avatar">🤖</div>
+            <div class="message-avatar"><span class="material-symbols-rounded">smart_toy</span></div>
             <div class="message-bubble"></div>
         `;
         targetMessages.appendChild(msgDiv);
@@ -468,7 +508,7 @@ async function sendMessage() {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message assistant`;
         msgDiv.innerHTML = `
-            <div class="message-avatar">🤖</div>
+            <div class="message-avatar"><span class="material-symbols-rounded">smart_toy</span></div>
             <div class="message-bubble">${formatMessage(`❌ **Lỗi:** ${err.message}`)}</div>
         `;
         targetMessages.appendChild(msgDiv);
@@ -554,7 +594,7 @@ function addChatMessage(role, content) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     msgDiv.innerHTML = `
-        <div class="message-avatar">${role === 'assistant' ? '🤖' : '👤'}</div>
+        <div class="message-avatar"><span class="material-symbols-rounded">${role === 'assistant' ? 'smart_toy' : 'person'}</span></div>
         <div class="message-bubble">${formatMessage(content)}</div>
     `;
     chatChatMessages.appendChild(msgDiv);
@@ -653,7 +693,7 @@ function updateUILanguage() {
     
     // Update code section
     document.querySelector('.code-textarea').placeholder = t.pasteCode;
-    analyzeCodeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> ${t.analyzeCode}`;
+    analyzeCodeBtn.innerHTML = `<span class="material-symbols-rounded btn-icon-left">analytics</span> ${t.analyzeCode}`;
     
     // Update welcome screens
     document.querySelector('#docWelcome h2').textContent = t.welcomeDoc;
