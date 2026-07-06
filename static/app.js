@@ -3,7 +3,8 @@ const state = {
     activeTab: 'doc',
     language: 'en', // Default to English
     doc: { sessionId: null, filename: null, model: null, isProcessing: false },
-    code: { sessionId: null, codename: null, model: null, isProcessing: false }
+    code: { sessionId: null, codename: null, model: null, isProcessing: false },
+    chat: { sessionId: null, model: null, isProcessing: false }
 };
 
 // ===== DOM REFS =====
@@ -39,6 +40,13 @@ const toast = $('toast');
 const toastIcon = $('toastIcon');
 const toastMessage = $('toastMessage');
 
+// Free Chat DOM Refs
+const chatWelcome = $('chatWelcome');
+const chatChatMessages = $('chatChatMessages');
+const chatQuickActions = $('chatQuickActions');
+const clearChatSessionBtn = $('clearChatSessionBtn');
+const chatStatus = $('chatStatus');
+
 // ===== INIT =====
 async function init() {
     await loadModels();
@@ -63,6 +71,7 @@ async function loadModels() {
                 modelSelect.value = enabledOptions[0].value;
                 if (!state.doc.model) state.doc.model = modelSelect.value;
                 if (!state.code.model) state.code.model = modelSelect.value;
+                if (!state.chat.model) state.chat.model = modelSelect.value;
             }
         }
     } catch (e) {
@@ -71,7 +80,7 @@ async function loadModels() {
 }
 
 // ===== TAB SWITCHING =====
-function switchTab(tab) {
+async function switchTab(tab) {
     state.activeTab = tab;
 
     // Sidebar tabs
@@ -81,23 +90,32 @@ function switchTab(tab) {
     // Main content tabs
     document.querySelectorAll('.main-tab').forEach(c => c.classList.toggle('active', c.id === `main-tab-${tab}`));
 
+    // Auto initialize chat session if switching to chat and no session exists
+    if (tab === 'chat' && !state.chat.sessionId) {
+        await initChatSession();
+    }
+
     // Update chat input
     updateChatInput();
 }
 
 function updateChatInput() {
     const tab = state.activeTab;
-    const s = tab === 'doc' ? state.doc : state.code;
-    const hasSession = tab === 'doc' ? !!state.doc.sessionId : !!state.code.sessionId;
+    const s = tab === 'doc' ? state.doc : (tab === 'code' ? state.code : state.chat);
+    const hasSession = tab === 'chat' ? !!state.chat.sessionId : (tab === 'doc' ? !!state.doc.sessionId : !!state.code.sessionId);
     const t = translations[state.language];
 
     if (hasSession) {
         chatInputContainer.style.display = 'block';
         chatInput.disabled = false;
         sendBtn.disabled = false;
-        chatInput.placeholder = tab === 'doc'
-            ? t.docChatPlaceholder
-            : t.codeChatPlaceholder;
+        if (tab === 'chat') {
+            chatInput.placeholder = t.chatPlaceholder;
+        } else {
+            chatInput.placeholder = tab === 'doc'
+                ? t.docChatPlaceholder
+                : t.codeChatPlaceholder;
+        }
         chatInput.focus();
     } else {
         chatInputContainer.style.display = 'none';
@@ -142,6 +160,7 @@ function setupEventListeners() {
     // Clear sessions
     clearSessionBtn.addEventListener('click', clearDocSession);
     clearCodeSessionBtn.addEventListener('click', clearCodeSession);
+    clearChatSessionBtn.addEventListener('click', clearChatSession);
 
     // Code analyze
     analyzeCodeBtn.addEventListener('click', analyzeCode);
@@ -161,6 +180,14 @@ function setupEventListeners() {
     document.querySelectorAll('#tab-code .quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             chatInput.value = btn.dataset.codeQuestion;
+            sendMessage();
+        });
+    });
+
+    // Quick actions - chat
+    document.querySelectorAll('#tab-chat .quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            chatInput.value = btn.dataset.chatQuestion;
             sendMessage();
         });
     });
@@ -385,8 +412,11 @@ async function sendMessage() {
     const question = chatInput.value.trim();
     if (!question) return;
 
-    const isDoc = state.activeTab === 'doc';
-    const s = isDoc ? state.doc : state.code;
+    const tab = state.activeTab;
+    const isDoc = tab === 'doc';
+    const isCode = tab === 'code';
+    const isChat = tab === 'chat';
+    const s = isDoc ? state.doc : (isCode ? state.code : state.chat);
 
     if (s.isProcessing || !s.sessionId) return;
     s.isProcessing = true;
@@ -394,8 +424,8 @@ async function sendMessage() {
     chatInput.disabled = true;
     sendBtn.disabled = true;
 
-    const targetMessages = isDoc ? docChatMessages : codeChatMessages;
-    const addMsg = isDoc ? addDocMessage : addCodeMessage;
+    const targetMessages = isDoc ? docChatMessages : (isCode ? codeChatMessages : chatChatMessages);
+    const addMsg = isDoc ? addDocMessage : (isCode ? addCodeMessage : addChatMessage);
 
     addMsg('user', question);
     chatInput.value = '';
@@ -403,7 +433,7 @@ async function sendMessage() {
     showTypingIndicator(targetMessages);
 
     try {
-        const endpoint = isDoc ? '/api/doc/chat' : '/api/code/chat';
+        const endpoint = isDoc ? '/api/doc/chat' : (isCode ? '/api/code/chat' : '/api/chat/chat');
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -435,7 +465,6 @@ async function sendMessage() {
         await readStream(res, bubble, '');
     } catch (err) {
         removeTypingIndicator();
-        const targetMessages = isDoc ? docChatMessages : codeChatMessages;
         const msgDiv = document.createElement('div');
         msgDiv.className = `message assistant`;
         msgDiv.innerHTML = `
@@ -486,6 +515,66 @@ async function clearCodeSession() {
     showToast('🔄', 'Đã xóa. Paste code mới.');
 }
 
+// ===== FREE CHAT FUNCTIONS =====
+async function initChatSession() {
+    state.chat.model = modelSelect.value;
+    chatWelcome.style.display = 'none';
+    chatChatMessages.style.display = 'flex';
+    chatChatMessages.innerHTML = '';
+    showTypingIndicator(chatChatMessages);
+    
+    try {
+        const res = await fetch('/api/chat/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: state.chat.model,
+                language: state.language
+            })
+        });
+        const data = await res.json();
+        removeTypingIndicator();
+        
+        if (!res.ok) throw new Error(data.error || 'Failed to initialize chat');
+
+        state.chat.sessionId = data.session_id;
+        
+        chatStatus.textContent = state.language === 'vi' ? '✅ Sẵn sàng' : '✅ Ready';
+        chatQuickActions.style.display = 'block';
+        
+        addChatMessage('assistant', data.greeting);
+        updateChatInput();
+    } catch (err) {
+        removeTypingIndicator();
+        showToast('❌', err.message);
+    }
+}
+
+function addChatMessage(role, content) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}`;
+    msgDiv.innerHTML = `
+        <div class="message-avatar">${role === 'assistant' ? '🤖' : '👤'}</div>
+        <div class="message-bubble">${formatMessage(content)}</div>
+    `;
+    chatChatMessages.appendChild(msgDiv);
+    chatChatMessages.scrollTop = chatChatMessages.scrollHeight;
+}
+
+async function clearChatSession() {
+    if (state.chat.sessionId) {
+        try { await fetch(`/api/chat/session/${state.chat.sessionId}/clear`, { method: 'POST' }); } catch (e) {}
+    }
+    state.chat.sessionId = null;
+    chatQuickActions.style.display = 'none';
+    chatChatMessages.style.display = 'none';
+    chatChatMessages.innerHTML = '';
+    chatWelcome.style.display = 'flex';
+    chatStatus.textContent = state.language === 'vi' ? 'Chưa bắt đầu' : 'Not started';
+    updateChatInput();
+    showToast('🔄', state.language === 'vi' ? 'Đã xóa lịch sử chat.' : 'Cleared chat history.');
+}
+
 // ===== LANGUAGE MANAGEMENT =====
 const translations = {
     en: {
@@ -498,6 +587,7 @@ const translations = {
         analyzed: '✅ Analyzed',
         docTab: 'Documents',
         codeTab: 'Code',
+        chatTab: 'Chat',
         pasteCode: 'Paste your code here',
         analyzeCode: 'Analyze Code',
         analyzingCode: '⏳ Analyzing...',
@@ -508,10 +598,13 @@ const translations = {
         selectFileError: 'Please select a file first!',
         clearSession: 'Cleared. Upload new file.',
         clearCodeSession: 'Cleared. Paste new code.',
+        clearChatSession: 'Cleared chat history.',
         welcomeDoc: 'Document Analysis',
         welcomeDocDesc: 'Upload files to analyze and ask questions',
         welcomeCode: 'Code Analysis',
-        welcomeCodeDesc: 'Paste code in sidebar to analyze and ask questions'
+        welcomeCodeDesc: 'Paste code in sidebar to analyze and ask questions',
+        welcomeChat: 'Free Chat',
+        welcomeChatDesc: 'Ask anything you want with AI'
     },
     vi: {
         uploadText: 'Kéo thả file vào đây',
@@ -523,6 +616,7 @@ const translations = {
         analyzed: '✅ Đã phân tích',
         docTab: 'Tài liệu',
         codeTab: 'Code',
+        chatTab: 'Trò chuyện',
         pasteCode: 'Dán code của bạn vào đây',
         analyzeCode: 'Phân tích Code',
         analyzingCode: '⏳ Đang phân tích...',
@@ -533,10 +627,13 @@ const translations = {
         selectFileError: 'Vui lòng paste code trước!',
         clearSession: 'Đã xóa. Upload file mới.',
         clearCodeSession: 'Đã xóa. Paste code mới.',
+        clearChatSession: 'Đã xóa lịch sử chat.',
         welcomeDoc: 'Phân tích tài liệu',
         welcomeDocDesc: 'Upload file để phân tích và đặt câu hỏi',
         welcomeCode: 'Phân tích Code',
-        welcomeCodeDesc: 'Dán code vào sidebar để phân tích và đặt câu hỏi'
+        welcomeCodeDesc: 'Dán code vào sidebar để phân tích và đặt câu hỏi',
+        welcomeChat: 'Trò chuyện tự do',
+        welcomeChatDesc: 'Hỏi bất cứ điều gì bạn muốn với AI'
     }
 };
 
@@ -552,6 +649,7 @@ function updateUILanguage() {
     // Update tab labels
     document.querySelector('[data-tab="doc"] .tab-label').textContent = t.docTab;
     document.querySelector('[data-tab="code"] .tab-label').textContent = t.codeTab;
+    document.querySelector('[data-tab="chat"] .tab-label').textContent = t.chatTab;
     
     // Update code section
     document.querySelector('.code-textarea').placeholder = t.pasteCode;
@@ -562,6 +660,8 @@ function updateUILanguage() {
     document.querySelector('#docWelcome p').textContent = t.welcomeDocDesc;
     document.querySelector('#codeWelcome h2').textContent = t.welcomeCode;
     document.querySelector('#codeWelcome p').textContent = t.welcomeCodeDesc;
+    document.querySelector('#chatWelcome h2').textContent = t.welcomeChat;
+    document.querySelector('#chatWelcome p').textContent = t.welcomeChatDesc;
     
     // Update chat input placeholder
     updateChatInput();

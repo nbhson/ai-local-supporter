@@ -26,6 +26,15 @@ class CodeSession(db.Model):
     ui_language = db.Column(db.String(10), default='en')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class ChatSession(db.Model):
+    __tablename__ = 'chat_sessions'
+    
+    session_id = db.Column(db.String(36), primary_key=True)
+    model = db.Column(db.String(100), nullable=False)
+    ui_language = db.Column(db.String(10), default='en')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class ChatMessage(db.Model):
     __tablename__ = 'chat_messages'
     

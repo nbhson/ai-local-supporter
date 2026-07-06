@@ -19,6 +19,11 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 - ⚡ **Đề xuất tối ưu**: Cải thiện performance và chất lượng
 - 💬 **Chat về code**: Đặt câu hỏi chi tiết về logic
 
+### 💬 Trò chuyện tự do
+- **Hỏi đáp đa năng**: Trò chuyện tự do với AI không cần ngữ cảnh tài liệu hoặc mã nguồn
+- 🎯 **Câu hỏi gợi ý**: Gợi ý nhanh các chủ đề công nghệ, viết lách, kế hoạch du lịch
+- 🔄 **Lưu trữ lịch sử**: Lưu trữ lịch sử hội thoại tự động vào SQLite
+
 ### 🎨 Giao diện
 - 🌐 **Đa ngôn ngữ**: Tiếng Việt / Tiếng Anh
 - 🎯 **Đa model**: Chọn bất kỳ model Ollama nào đã cài
@@ -160,6 +165,12 @@ Bạn có thể thay đổi các cấu hình như Model mặc định, URL cổn
 6. **Đặt câu hỏi**: Hỏi về chi tiết code
 7. **Xóa session**: Click icon thùng rác để paste code mới
 
+### 💬 Trò chuyện tự do
+1. **Chọn tab "Trò chuyện"**
+2. **Chọn model** AI và **Ngôn ngữ** mong muốn từ sidebar
+3. **Nhập câu hỏi** và bắt đầu trò chuyện trực tiếp với AI
+4. **Xóa session**: Click icon thùng rác để xóa lịch sử cuộc trò chuyện và bắt đầu phiên mới
+
 ## 📁 Cấu trúc project
 
 Cấu trúc dự án đã được tối ưu hóa theo dạng Module hóa để dễ dàng bảo trì và mở rộng:
@@ -176,7 +187,8 @@ ai-local-support/
 ├── blueprints/             # Quản lý các API endpoint được phân tách theo module
 │   ├── __init__.py
 │   ├── doc.py              # Xử lý API liên quan đến Tài liệu (Upload, Chat RAG, Trạng thái)
-│   └── code.py             # Xử lý API liên quan đến Code (Phân tích, Chat Code)
+│   ├── code.py             # Xử lý API liên quan đến Code (Phân tích, Chat Code)
+│   └── chat.py             # Xử lý API liên quan đến Trò chuyện tự do (Khởi tạo, Chat, Xóa session)
 ├── services/               # Lớp xử lý logic nghiệp vụ nghiệp vụ (Business Logic)
 │   ├── __init__.py
 │   ├── database.py         # Khởi tạo instance SQLAlchemy
@@ -209,6 +221,13 @@ ai-local-support/
 | POST | `/api/code/analyze` | Gửi code để phân tích ban đầu (bắt đầu một session) |
 | POST | `/api/code/chat` | Chat/hỏi đáp về logic, lỗi, tối ưu hóa của đoạn code trong session |
 | POST | `/api/code/session/<session_id>/clear` | Xóa lịch sử chat về đoạn code trong session |
+
+### Chat Module
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/chat/init` | Khởi tạo một phiên trò chuyện tự do mới |
+| POST | `/api/chat/chat` | Trò chuyện tự do và nhận phản hồi dạng stream từ model |
+| POST | `/api/chat/session/<session_id>/clear` | Xóa lịch sử trò chuyện tự do trong session |
 
 ### Common
 | Method | Endpoint | Mô tả |

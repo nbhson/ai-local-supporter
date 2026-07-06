@@ -32,6 +32,10 @@
                     <span class="tab-icon">💻</span>
                     <span class="tab-label">Code</span>
                 </button>
+                <button class="tab-btn" data-tab="chat">
+                    <span class="tab-icon">💬</span>
+                    <span class="tab-label">Trò chuyện</span>
+                </button>
             </div>
 
             <!-- Language Selection (shared) -->
@@ -163,6 +167,33 @@
                 </div>
             </div>
 
+            <!-- ===== TAB 3: Chat ===== -->
+            <div class="tab-content" id="tab-chat">
+                <div class="chat-info-section" style="padding: 16px; border-bottom: 1px solid var(--border-color);">
+                    <p class="section-title">💬 Trò chuyện tự do</p>
+                    <div class="file-info" style="display: flex; align-items: center; gap: 10px; margin-top: 12px; background: var(--bg-card); padding: 10px; border-radius: var(--radius-sm);">
+                        <div class="file-icon">💬</div>
+                        <div class="file-details" style="flex: 1; min-width: 0;">
+                            <p class="file-name" style="font-weight: 500; font-size: 0.9rem; color: var(--text-primary);">Free Chat</p>
+                            <p class="file-status" style="font-size: 0.8rem; color: var(--success);" id="chatStatus">Sẵn sàng</p>
+                        </div>
+                        <button class="btn-icon" id="clearChatSessionBtn" title="Xóa lịch sử">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="quick-actions" id="chatQuickActions" style="display:none;">
+                    <p class="section-title">📌 Câu hỏi gợi ý</p>
+                    <button class="quick-btn" data-chat-question="Giải thích khái niệm Quantum Computing đơn giản">⚛️ Quantum Computing</button>
+                    <button class="quick-btn" data-chat-question="Viết một email chuyên nghiệp xin nghỉ phép">✉️ Viết email</button>
+                    <button class="quick-btn" data-chat-question="Gợi ý kế hoạch du lịch Đà Lạt 3 ngày 2 đêm">✈️ Du lịch Đà Lạt</button>
+                </div>
+            </div>
+
             <div class="sidebar-footer">
                 <p>Powered by Ollama + Flask</p>
             </div>
@@ -210,6 +241,25 @@
                     </div>
                 </div>
                 <div class="chat-messages" id="codeChatMessages" style="display:none;"></div>
+            </div>
+
+            <!-- ===== Tab Free Chat ===== -->
+            <div class="tab-content main-tab" id="main-tab-chat">
+                <div class="welcome-screen" id="chatWelcome">
+                    <div class="welcome-icon">
+                        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                    </div>
+                    <h2>Trò chuyện tự do</h2>
+                    <p>Hỏi bất cứ điều gì bạn muốn với AI</p>
+                    <div class="features">
+                        <div class="feature"><span class="feature-icon">💡</span><span>Giải đáp thắc mắc</span></div>
+                        <div class="feature"><span class="feature-icon">✍️</span><span>Viết lách và sáng tạo</span></div>
+                        <div class="feature"><span class="feature-icon">🧠</span><span>Thảo luận ý tưởng</span></div>
+                    </div>
+                </div>
+                <div class="chat-messages" id="chatChatMessages" style="display:none;"></div>
             </div>
 
             <!-- Shared Chat Input -->
