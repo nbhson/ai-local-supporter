@@ -45,6 +45,10 @@ cd ai-local-support
 
 ```bash
 pip3 install -r requirements.txt
+
+hoặc
+
+python3 -m pip install -r requirements.txt
 ```
 
 ### 3. Cài model Ollama (nếu chưa có)

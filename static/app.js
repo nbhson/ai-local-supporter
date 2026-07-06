@@ -1,0 +1,586 @@
+// ===== STATE =====
+const state = {
+    activeTab: 'doc',
+    language: 'en', // Default to English
+    doc: { sessionId: null, filename: null, model: null, isProcessing: false },
+    code: { sessionId: null, codename: null, model: null, isProcessing: false }
+};
+
+// ===== DOM REFS =====
+const $ = id => document.getElementById(id);
+const uploadArea = $('uploadArea');
+const fileInput = $('fileInput');
+const modelSelect = $('modelSelect');
+const languageSelect = $('languageSelect');
+const uploadProgress = $('uploadProgress');
+const progressFill = $('progressFill');
+const progressText = $('progressText');
+const fileInfo = $('fileInfo');
+const fileName = $('fileName');
+const fileStatus = $('fileStatus');
+const clearSessionBtn = $('clearSessionBtn');
+const quickActions = $('quickActions');
+const docWelcome = $('docWelcome');
+const docChatMessages = $('docChatMessages');
+const codeInput = $('codeInput');
+const codeLanguage = $('codeLanguage');
+const analyzeCodeBtn = $('analyzeCodeBtn');
+const codeInfo = $('codeInfo');
+const codeFileName = $('codeFileName');
+const codeStatus = $('codeStatus');
+const clearCodeSessionBtn = $('clearCodeSessionBtn');
+const codeQuickActions = $('codeQuickActions');
+const codeWelcome = $('codeWelcome');
+const codeChatMessages = $('codeChatMessages');
+const chatInputContainer = $('chatInputContainer');
+const chatInput = $('chatInput');
+const sendBtn = $('sendBtn');
+const toast = $('toast');
+const toastIcon = $('toastIcon');
+const toastMessage = $('toastMessage');
+
+// ===== INIT =====
+async function init() {
+    await loadModels();
+    setupEventListeners();
+    updateUILanguage(); // Set default language on page load
+}
+
+async function loadModels() {
+    try {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        if (data.models && data.models.length > 0) {
+            modelSelect.innerHTML = data.models.map(m =>
+                `<option value="${m}">${m}</option>`
+            ).join('');
+        }
+    } catch (e) {
+        console.warn('Could not load models:', e);
+    }
+}
+
+// ===== TAB SWITCHING =====
+function switchTab(tab) {
+    state.activeTab = tab;
+
+    // Sidebar tabs
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.sidebar .tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tab}`));
+
+    // Main content tabs
+    document.querySelectorAll('.main-tab').forEach(c => c.classList.toggle('active', c.id === `main-tab-${tab}`));
+
+    // Update chat input
+    updateChatInput();
+}
+
+function updateChatInput() {
+    const tab = state.activeTab;
+    const s = tab === 'doc' ? state.doc : state.code;
+    const hasSession = tab === 'doc' ? !!state.doc.sessionId : !!state.code.sessionId;
+    const t = translations[state.language];
+
+    if (hasSession) {
+        chatInputContainer.style.display = 'block';
+        chatInput.disabled = false;
+        sendBtn.disabled = false;
+        chatInput.placeholder = tab === 'doc'
+            ? t.docChatPlaceholder
+            : t.codeChatPlaceholder;
+        chatInput.focus();
+    } else {
+        chatInputContainer.style.display = 'none';
+        chatInput.disabled = true;
+        sendBtn.disabled = true;
+    }
+}
+
+// ===== EVENT LISTENERS =====
+function setupEventListeners() {
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    // Language change
+    languageSelect.addEventListener('change', (e) => {
+        state.language = e.target.value;
+        updateUILanguage();
+    });
+
+    // Upload
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) handleFileUpload(e.target.files[0]);
+    });
+
+    // Chat
+    sendBtn.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    chatInput.addEventListener('input', autoResizeTextarea);
+
+    // Clear sessions
+    clearSessionBtn.addEventListener('click', clearDocSession);
+    clearCodeSessionBtn.addEventListener('click', clearCodeSession);
+
+    // Code analyze
+    analyzeCodeBtn.addEventListener('click', analyzeCode);
+    codeInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.ctrlKey) analyzeCode();
+    });
+
+    // Quick actions - doc
+    document.querySelectorAll('#tab-doc .quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            chatInput.value = btn.dataset.question;
+            sendMessage();
+        });
+    });
+
+    // Quick actions - code
+    document.querySelectorAll('#tab-code .quick-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            chatInput.value = btn.dataset.codeQuestion;
+            sendMessage();
+        });
+    });
+}
+
+// ===== DOCUMENT UPLOAD =====
+async function handleFileUpload(file) {
+    if (file.size > 50 * 1024 * 1024) {
+        showToast('⚠️', 'File quá lớn. Giới hạn 50MB.');
+        return;
+    }
+
+    state.doc.model = modelSelect.value;
+
+    uploadArea.style.display = 'none';
+    uploadProgress.style.display = 'block';
+    progressFill.style.width = '20%';
+    progressText.textContent = `Đang tải lên ${file.name}...`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('model', state.doc.model);
+    formData.append('language', state.language);
+
+    try {
+        const res = await fetch('/api/doc/upload', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json'
+            },
+            body: formData
+        });
+        progressFill.style.width = '70%';
+        progressText.textContent = 'Đang phân tích với AI...';
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+        state.doc.sessionId = data.session_id;
+        state.doc.filename = data.filename;
+
+        progressFill.style.width = '100%';
+        progressText.textContent = '✅ Hoàn tất!';
+
+        setTimeout(() => {
+            uploadProgress.style.display = 'none';
+            showDocFileInfo(data);
+            
+            docWelcome.style.display = 'none';
+            docChatMessages.style.display = 'flex';
+            docChatMessages.innerHTML = '';
+            
+            addDocMessage('assistant', data.greeting);
+            updateChatInput();
+        }, 500);
+    } catch (err) {
+        progressFill.style.width = '100%';
+        progressFill.style.background = '#ef4444';
+        progressText.textContent = '❌ Lỗi: ' + err.message;
+        showToast('❌', err.message);
+        setTimeout(() => {
+            uploadProgress.style.display = 'none';
+            uploadArea.style.display = 'block';
+            progressFill.style.background = 'var(--primary-color)';
+        }, 2000);
+    }
+}
+
+function showDocFileInfo(data) {
+    fileName.textContent = data.filename;
+    fileStatus.textContent = '✅ Đã phân tích';
+    fileInfo.style.display = 'flex';
+    quickActions.style.display = 'block';
+    uploadArea.style.display = 'none';
+}
+
+function addDocMessage(role, content) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}`;
+    msgDiv.innerHTML = `
+        <div class="message-avatar">${role === 'assistant' ? '🤖' : '👤'}</div>
+        <div class="message-bubble">${formatMessage(content)}</div>
+    `;
+    docChatMessages.appendChild(msgDiv);
+    docChatMessages.scrollTop = docChatMessages.scrollHeight;
+}
+
+function addCodeMessage(role, content) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${role}`;
+    msgDiv.innerHTML = `
+        <div class="message-avatar">${role === 'assistant' ? '🤖' : '👤'}</div>
+        <div class="message-bubble">${formatMessage(content)}</div>
+    `;
+    codeChatMessages.appendChild(msgDiv);
+    codeChatMessages.scrollTop = codeChatMessages.scrollHeight;
+}
+
+function formatMessage(text) {
+    if (!text) return "";
+    
+    // Handle DeepSeek <think> tag
+    let formatted = text.replace(/<think>([\s\S]*?)<\/think>/g, '<div class="thought-process"><div class="thought-header">💭 Thought Process</div><div class="thought-content">$1</div></div>');
+    
+    // Handle unclosed <think> tag during streaming
+    if (formatted.includes('<think>') && !formatted.includes('</think>')) {
+        formatted = formatted.replace(/<think>([\s\S]*)/, '<div class="thought-process"><div class="thought-header">💭 Thinking...</div><div class="thought-content">$1</div></div>');
+    }
+
+    return formatted
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<div class="code-block-wrapper"><div class="code-header">$1</div><pre><code>$2</code></pre></div>')
+        .replace(/`(.*?)`/g, '<code>$1</code>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br>');
+}
+
+function showTypingIndicator(target) {
+    const el = document.createElement('div');
+    el.className = 'message assistant typing';
+    el.id = 'typingIndicator';
+    el.innerHTML = `
+        <div class="message-avatar">🤖</div>
+        <div class="message-bubble typing-bubble">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+    `;
+    target.appendChild(el);
+    target.scrollTop = target.scrollHeight;
+}
+
+function removeTypingIndicator() {
+    const el = document.getElementById('typingIndicator');
+    if (el) el.remove();
+}
+
+// ===== CODE ANALYSIS =====
+async function analyzeCode() {
+    const code = codeInput.value.trim();
+    if (!code) {
+        showToast('⚠️', 'Vui lòng paste code trước!');
+        return;
+    }
+
+    state.code.model = modelSelect.value;
+    analyzeCodeBtn.disabled = true;
+    analyzeCodeBtn.textContent = '⏳ Đang phân tích...';
+
+    try {
+        const res = await fetch('/api/code/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                code: code,
+                language: codeLanguage.value,
+                model: state.code.model,
+                ui_language: state.language
+            })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Analysis failed');
+
+        state.code.sessionId = data.session_id;
+        state.code.codename = `code.${codeLanguage.value}`;
+
+        // Show code info
+        codeFileName.textContent = `code.${codeLanguage.value}`;
+        codeStatus.textContent = '✅ Đã phân tích';
+        codeInfo.style.display = 'block';
+        codeQuickActions.style.display = 'block';
+        document.querySelector('.code-input-section').style.display = 'none';
+
+        // Show analysis container
+        codeWelcome.style.display = 'none';
+        codeChatMessages.style.display = 'flex';
+        codeChatMessages.innerHTML = '';
+        
+        addCodeMessage('assistant', data.greeting);
+        updateChatInput();
+
+        showToast('✅', 'Phân tích code thành công!');
+    } catch (err) {
+        showToast('❌', err.message);
+    } finally {
+        analyzeCodeBtn.disabled = false;
+        analyzeCodeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> Phân tích Code`;
+    }
+}
+
+// ===== SEND MESSAGE =====
+async function sendMessage() {
+    const question = chatInput.value.trim();
+    if (!question) return;
+
+    const isDoc = state.activeTab === 'doc';
+    const s = isDoc ? state.doc : state.code;
+
+    if (s.isProcessing || !s.sessionId) return;
+    s.isProcessing = true;
+
+    chatInput.disabled = true;
+    sendBtn.disabled = true;
+
+    const targetMessages = isDoc ? docChatMessages : codeChatMessages;
+    const addMsg = isDoc ? addDocMessage : addCodeMessage;
+
+    addMsg('user', question);
+    chatInput.value = '';
+    autoResizeTextarea();
+    showTypingIndicator(targetMessages);
+
+    try {
+        const endpoint = isDoc ? '/api/doc/chat' : '/api/code/chat';
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: s.sessionId,
+                question: question,
+                model: modelSelect.value,
+                language: state.language
+            })
+        });
+
+        removeTypingIndicator();
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Chat failed');
+        }
+        
+        // create bubble for assistant
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message assistant`;
+        msgDiv.innerHTML = `
+            <div class="message-avatar">🤖</div>
+            <div class="message-bubble"></div>
+        `;
+        targetMessages.appendChild(msgDiv);
+        const bubble = msgDiv.querySelector('.message-bubble');
+        
+        await readStream(res, bubble, '');
+    } catch (err) {
+        removeTypingIndicator();
+        const targetMessages = isDoc ? docChatMessages : codeChatMessages;
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message assistant`;
+        msgDiv.innerHTML = `
+            <div class="message-avatar">🤖</div>
+            <div class="message-bubble">${formatMessage(`❌ **Lỗi:** ${err.message}`)}</div>
+        `;
+        targetMessages.appendChild(msgDiv);
+        showToast('❌', err.message);
+    } finally {
+        s.isProcessing = false;
+        chatInput.disabled = false;
+        sendBtn.disabled = false;
+        chatInput.focus();
+    }
+}
+
+// ===== SESSION MANAGEMENT =====
+async function clearDocSession() {
+    if (state.doc.sessionId) {
+        try { await fetch(`/api/doc/session/${state.doc.sessionId}/clear`, { method: 'POST' }); } catch (e) {}
+    }
+    state.doc.sessionId = null;
+    state.doc.filename = null;
+    fileInfo.style.display = 'none';
+    quickActions.style.display = 'none';
+    uploadArea.style.display = 'block';
+    docChatMessages.style.display = 'none';
+    docChatMessages.innerHTML = '';
+    docWelcome.style.display = 'flex';
+    updateChatInput();
+    showToast('🔄', 'Đã xóa. Upload file mới.');
+}
+
+async function clearCodeSession() {
+    if (state.code.sessionId) {
+        try { await fetch(`/api/code/session/${state.code.sessionId}/clear`, { method: 'POST' }); } catch (e) {}
+    }
+    state.code.sessionId = null;
+    state.code.codename = null;
+    codeInfo.style.display = 'none';
+    codeQuickActions.style.display = 'none';
+    document.querySelector('.code-input-section').style.display = 'block';
+    codeInput.value = '';
+    codeChatMessages.style.display = 'none';
+    codeChatMessages.innerHTML = '';
+    codeWelcome.style.display = 'flex';
+    updateChatInput();
+    showToast('🔄', 'Đã xóa. Paste code mới.');
+}
+
+// ===== LANGUAGE MANAGEMENT =====
+const translations = {
+    en: {
+        uploadText: 'Drag & drop files here',
+        uploadSubtext: 'or click to select files',
+        uploadFormats: 'PDF, DOCX, TXT, MD, PNG, JPG, ...',
+        processing: 'Processing...',
+        analyzing: 'Analyzing with AI...',
+        completed: '✅ Complete!',
+        analyzed: '✅ Analyzed',
+        docTab: 'Documents',
+        codeTab: 'Code',
+        pasteCode: 'Paste your code here',
+        analyzeCode: 'Analyze Code',
+        analyzingCode: '⏳ Analyzing...',
+        chatPlaceholder: 'Type your question...',
+        docChatPlaceholder: 'Ask about the document...',
+        codeChatPlaceholder: 'Ask about the code...',
+        uploadError: 'File too large. Limit 50MB.',
+        selectFileError: 'Please select a file first!',
+        clearSession: 'Cleared. Upload new file.',
+        clearCodeSession: 'Cleared. Paste new code.',
+        welcomeDoc: 'Document Analysis',
+        welcomeDocDesc: 'Upload files to analyze and ask questions',
+        welcomeCode: 'Code Analysis',
+        welcomeCodeDesc: 'Paste code in sidebar to analyze and ask questions'
+    },
+    vi: {
+        uploadText: 'Kéo thả file vào đây',
+        uploadSubtext: 'hoặc click để chọn file',
+        uploadFormats: 'PDF, DOCX, TXT, MD, PNG, JPG, ...',
+        processing: 'Đang xử lý...',
+        analyzing: 'Đang phân tích với AI...',
+        completed: '✅ Hoàn tất!',
+        analyzed: '✅ Đã phân tích',
+        docTab: 'Tài liệu',
+        codeTab: 'Code',
+        pasteCode: 'Dán code của bạn vào đây',
+        analyzeCode: 'Phân tích Code',
+        analyzingCode: '⏳ Đang phân tích...',
+        chatPlaceholder: 'Nhập câu hỏi...',
+        docChatPlaceholder: 'Nhập câu hỏi về tài liệu...',
+        codeChatPlaceholder: 'Nhập câu hỏi về code...',
+        uploadError: 'File quá lớn. Giới hạn 50MB.',
+        selectFileError: 'Vui lòng paste code trước!',
+        clearSession: 'Đã xóa. Upload file mới.',
+        clearCodeSession: 'Đã xóa. Paste code mới.',
+        welcomeDoc: 'Phân tích tài liệu',
+        welcomeDocDesc: 'Upload file để phân tích và đặt câu hỏi',
+        welcomeCode: 'Phân tích Code',
+        welcomeCodeDesc: 'Dán code vào sidebar để phân tích và đặt câu hỏi'
+    }
+};
+
+function updateUILanguage() {
+    const lang = state.language;
+    const t = translations[lang];
+    
+    // Update upload area
+    document.querySelector('.upload-text').textContent = t.uploadText;
+    document.querySelector('.upload-subtext').textContent = t.uploadSubtext;
+    document.querySelector('.upload-formats').textContent = t.uploadFormats;
+    
+    // Update tab labels
+    document.querySelector('[data-tab="doc"] .tab-label').textContent = t.docTab;
+    document.querySelector('[data-tab="code"] .tab-label').textContent = t.codeTab;
+    
+    // Update code section
+    document.querySelector('.code-textarea').placeholder = t.pasteCode;
+    analyzeCodeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> ${t.analyzeCode}`;
+    
+    // Update welcome screens
+    document.querySelector('#docWelcome h2').textContent = t.welcomeDoc;
+    document.querySelector('#docWelcome p').textContent = t.welcomeDocDesc;
+    document.querySelector('#codeWelcome h2').textContent = t.welcomeCode;
+    document.querySelector('#codeWelcome p').textContent = t.welcomeCodeDesc;
+    
+    // Update chat input placeholder
+    updateChatInput();
+}
+
+// ===== UTILITIES =====
+async function readStream(response, messageBubbleElement, prefixText = "") {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let fullText = "";
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        const container = messageBubbleElement.closest('.chat-messages');
+        const threshold = 150;
+        const wasAtBottom = container ? (container.scrollHeight - container.scrollTop - container.clientHeight < threshold) : false;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const dataStr = line.slice(6).trim();
+                if (dataStr === '[DONE]') break;
+                
+                try {
+                    const data = JSON.parse(dataStr);
+                    if (data.content) {
+                        fullText += data.content;
+                        messageBubbleElement.innerHTML = formatMessage(prefixText + fullText);
+                    } else if (data.error) {
+                        messageBubbleElement.innerHTML = formatMessage(`❌ **Lỗi:** ${data.error}`);
+                    }
+                } catch (e) {
+                    // ignore partial json
+                }
+            }
+        }
+        
+        if (container && wasAtBottom) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+}
+
+function autoResizeTextarea() {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+}
+
+function showToast(icon, message) {
+    toastIcon.textContent = icon;
+    toastMessage.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
+// ===== START =====
+init();

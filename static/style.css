@@ -394,9 +394,29 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    position: relative;
+    height: 100%;
     overflow: hidden;
     background: var(--bg-main);
+}
+
+.main-tab {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.main-tab.active {
+    display: flex;
+}
+
+.sidebar .tab-content {
+    display: none;
+}
+
+.sidebar .tab-content.active {
+    display: block;
 }
 
 /* ===== Welcome Screen ===== */
@@ -426,7 +446,7 @@ body {
     background-clip: text;
 }
 
-.welcome-screen > p {
+.welcome-screen>p {
     color: var(--text-secondary);
     font-size: 1rem;
     margin-bottom: 30px;
@@ -460,24 +480,29 @@ body {
 .chat-messages {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 20px;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    scroll-behavior: smooth;
+    scrollbar-width: auto;
+    /* Make it more visible */
+    scrollbar-color: var(--text-muted) var(--bg-main);
+    height: calc(100% - 110px);
 }
 
 .chat-messages::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
 }
 
 .chat-messages::-webkit-scrollbar-track {
-    background: transparent;
+    background: var(--bg-main);
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
     background: var(--border-color);
-    border-radius: 3px;
+    border-radius: 4px;
+    border: 2px solid var(--bg-main);
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
@@ -497,6 +522,7 @@ body {
         opacity: 0;
         transform: translateY(10px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -527,6 +553,10 @@ body {
     font-size: 0.9rem;
     line-height: 1.6;
     position: relative;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
 }
 
 .message.user .message-bubble {
@@ -596,10 +626,14 @@ body {
 }
 
 @keyframes typing {
-    0%, 60%, 100% {
+
+    0%,
+    60%,
+    100% {
         transform: translateY(0);
         opacity: 0.4;
     }
+
     30% {
         transform: translateY(-6px);
         opacity: 1;
@@ -860,3 +894,84 @@ body {
 .file-info .file-icon svg {
     color: var(--primary-color);
 }
+
+/* ===== DeepSeek Thought Process & Code Blocks ===== */
+.thought-process {
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--text-muted);
+    margin: 10px 0;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.thought-header {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.thought-content {
+    color: var(--text-secondary);
+    font-style: italic;
+    line-height: 1.5;
+}
+
+.code-block-wrapper {
+    background: #0d1117;
+    border-radius: 8px;
+    margin: 12px 0;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.code-header {
+    background: #161b22;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    font-family: monospace;
+}
+
+.message-bubble pre {
+    margin: 0;
+    padding: 12px;
+    overflow-x: auto;
+}
+
+.message-bubble code {
+    font-size: 0.9rem;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.code-block-wrapper code {
+    background: transparent;
+    padding: 0;
+}
+
+/* ===== Custom Scrollbar ===== */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* Custom Scrollbar moved up */
