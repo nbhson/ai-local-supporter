@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import subprocess
+import time
 from flask import Blueprint, request, jsonify, Response
 
 import config
@@ -439,6 +440,7 @@ def chat_project(session_id):
     session = ProjectSession.query.get(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
+    project_path = session.project_path
     data = request.json or {}
     question = data.get('question', '').strip()
     language = data.get('language', 'en')
@@ -460,7 +462,7 @@ def chat_project(session_id):
         for rel_path in context_files:
             if not rel_path or '..' in rel_path or rel_path.startswith('/'):
                 continue
-            filepath = os.path.join(session.project_path, rel_path)
+            filepath = os.path.join(project_path, rel_path)
             if os.path.exists(filepath) and os.path.isfile(filepath):
                 try:
                     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
@@ -474,7 +476,7 @@ def chat_project(session_id):
         context_str = "\n".join(context_str_parts)
 
     # Get initial project tree (limit depth to 2 for context)
-    tree_nodes = scan_directory(session.project_path, session.project_path, max_depth=2)
+    tree_nodes = scan_directory(project_path, project_path, max_depth=2)
     tree_str = "\n".join(get_simple_tree_str(tree_nodes))
     
     system_prompt = f"""You are a professional AI Software Engineering Agent helping the user work on a local project workspace.
@@ -520,6 +522,7 @@ RULES:
 - For thought process, keep it extremely concise (1-2 sentences) inside <think>...</think>. For simple greetings or casual chat, SKIP the thought process and reply immediately.
 - CRITICAL: You must ONLY read files that actually exist in the project. Check the "CURRENT DIRECTORY TREE STRUCTURE" list above to verify if a file exists before trying to read it. Do NOT guess, assume, or hallucinate file paths (e.g. project-overview.md, frontend-architecture.md, etc.) if they are not listed in the tree.
 - CRITICAL: If a file's content is already provided in the ADDITIONAL CONTEXT, DO NOT use [READ_FILE] on it and DO NOT print its code in your response. Answer the user directly!
+- If the user is only asking a question, explanation, or general query that does NOT require modifying files or running commands, answer the query directly and append [FINISH] at the end of your response. Do NOT call other tools like [READ_FILE] or [LIST_DIR] unnecessarily.
 """
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -527,7 +530,10 @@ RULES:
     # Retrieve chat history (max 8 messages)
     chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
     for msg in chat_history[-8:]:
-        messages.append({"role": msg.role, "content": msg.content})
+        content = msg.content
+        if len(content) > 3000:
+            content = content[:3000] + "\n\n...[content truncated in history to save context]..."
+        messages.append({"role": msg.role, "content": content})
         
     # Save user message to history
     user_msg = ChatMessage(session_id=session_id, role='user', content=question)
@@ -553,6 +559,7 @@ RULES:
                 # Send iteration status
                 status_msg = f"AI is thinking (Loop {iteration+1}/10)..." if language == 'en' else f"AI đang suy nghĩ (Vòng lặp {iteration+1}/10)..."
                 yield make_sse('agent_status', status=status_msg)
+                time.sleep(0.1) # Give OS a moment to flush the socket
                 
                 # Call Ollama
                 current_answer = ""
@@ -598,13 +605,14 @@ RULES:
                 elif tool_name == 'RUN_COMMAND':
                     tool_status = f"Running command: {tool_args.get('command')}..." if language == 'en' else f"Đang chạy lệnh: {tool_args.get('command')}..."
                 yield make_sse('agent_status', status=tool_status)
+                time.sleep(0.1) # Give OS a moment to flush the socket
                 
                 if tool_name == 'FINISH':
                     yield make_sse('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
                     break
                 
                 # Execute tool
-                tool_result = execute_agent_tool(tool_name, tool_args, session.project_path)
+                tool_result = execute_agent_tool(tool_name, tool_args, project_path)
                 
                 # Yield tool result event
                 # Keep output safe, limit size sent over SSE
@@ -621,6 +629,7 @@ RULES:
                 elif tool_name == 'RUN_COMMAND':
                     post_status = f"Command finished. AI is analyzing output..." if language == 'en' else f"Đã chạy lệnh xong. AI đang phân tích kết quả..."
                 yield make_sse('agent_status', status=post_status)
+                time.sleep(0.1) # Give OS a moment to flush the socket
                 
                 # Append result to messages history for next turn
                 # Truncate content to save context and speed up Ollama prompt evaluation
