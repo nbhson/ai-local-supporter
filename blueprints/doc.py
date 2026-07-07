@@ -10,11 +10,13 @@ from werkzeug.utils import secure_filename
 import config
 from services.database import db
 from services.models import DocumentSession, DocumentFile, ChatMessage
+from services.repositories import DocumentSessionRepository, ChatMessageRepository
 from services.document_service import (
     allowed_file, is_image_file, cleanup_old_uploads
 )
 from services.rag_service import retrieve_context
 from services.ollama_service import call_ollama, is_vision_model
+from services.helper_service import get_lang_instruction, retrieve_chat_history, save_chat_message
 from tasks import process_document_task
 
 doc_bp = Blueprint('doc', __name__)
@@ -83,8 +85,7 @@ def upload_document():
         model=model,
         file_type="image" if any(f["file_type"] == "image" for f in saved_files) else "document"
     )
-    db.session.add(session)
-    db.session.commit()
+    DocumentSessionRepository.save(session)
 
     # Create individual DocumentFile records
     for f in saved_files:
@@ -95,8 +96,7 @@ def upload_document():
             file_type=f["file_type"],
             status='processing'
         )
-        db.session.add(doc_file)
-    db.session.commit()
+        DocumentSessionRepository.save_file(doc_file)
 
     # Trigger Celery background task with only session_id
     process_document_task.delay(session_id, language, model)
@@ -109,11 +109,11 @@ def upload_document():
 
 @doc_bp.route('/status/<session_id>', methods=['GET'])
 def get_session_status(session_id):
-    session = DocumentSession.query.get(session_id)
+    session = DocumentSessionRepository.get_by_id(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
 
-    files = DocumentFile.query.filter_by(session_id=session_id).all()
+    files = DocumentSessionRepository.get_files_by_session_id(session_id)
     files_data = [{
         "filename": f.filename,
         "file_type": f.file_type,
@@ -124,8 +124,11 @@ def get_session_status(session_id):
 
     if session.status == 'ready':
         # Get greeting message from DB
-        greeting_msg = ChatMessage.query.filter_by(session_id=session_id, role='assistant').order_by(ChatMessage.created_at.asc()).first()
-        greeting = greeting_msg.content if greeting_msg else ""
+        greeting = ""
+        messages = ChatMessageRepository.get_messages_by_session_id(session_id)
+        assistant_msgs = [msg for msg in messages if msg.role == 'assistant']
+        if assistant_msgs:
+            greeting = assistant_msgs[0].content
         return jsonify({
             "status": "ready",
             "session_id": session_id,
@@ -156,7 +159,7 @@ def chat_document():
     question = data.get('question', '').strip()
     language = data.get('language', 'en')
     
-    session = DocumentSession.query.get(session_id)
+    session = DocumentSessionRepository.get_by_id(session_id)
     if not session:
         return jsonify({"error": "Session not found. Upload a file first."}), 400
     if not question:
@@ -165,17 +168,18 @@ def chat_document():
     model = data.get('model', session.model or config.DEFAULT_MODEL)
 
     # Determine language instruction
-    lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
+    lang_instruction = get_lang_instruction(language)
 
     # Retrieve all ready base64 images from DocumentFile table
-    image_files = DocumentFile.query.filter_by(session_id=session_id, file_type='image', status='ready').all()
+    files = DocumentSessionRepository.get_files_by_session_id(session_id)
+    image_files = [f for f in files if f.file_type == 'image' and f.status == 'ready']
     base64_images = [img.base64_image for img in image_files if img.base64_image]
 
     use_vision = is_vision_model(model) and len(base64_images) > 0
 
     if use_vision:
         # Perform RAG retrieval for context alongside image details
-        context = retrieve_context(session_id, question, top_k=4)
+        context = retrieve_context(session_id, question, top_k=config.RAG_TOP_K)
         
         system_prompt = f"""You are a document analysis assistant. Answer the user question based on the provided context and images.
 If the answer cannot be found in the context or images, say "I cannot find the answer in the document."
@@ -186,11 +190,7 @@ Context from document:
 {lang_instruction}"""
         messages = [{"role": "system", "content": system_prompt}]
         
-        chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
-        # skip first greeting message and only keep last 10 messages
-        recent_history = [msg for msg in chat_history[-10:] if chat_history and msg.id != chat_history[0].id]
-        for msg in recent_history:
-            messages.append({"role": msg.role, "content": msg.content})
+        messages.extend(retrieve_chat_history(session_id, config.CHAT_HISTORY_LIMIT, skip_first=True))
             
         messages.append({
             "role": "user",
@@ -199,7 +199,7 @@ Context from document:
         })
     else:
         # Perform RAG retrieval for documents or image-with-OCR fallback
-        context = retrieve_context(session_id, question, top_k=4)
+        context = retrieve_context(session_id, question, top_k=config.RAG_TOP_K)
         
         system_prompt = f"""You are a document analysis assistant. Answer the user question based ONLY on the provided context.
 If the answer cannot be found in the context, say "I cannot find the answer in the document."
@@ -210,18 +210,12 @@ Context from document:
 {lang_instruction}"""
         messages = [{"role": "system", "content": system_prompt}]
         
-        chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
-        # skip first greeting message and only keep last 10 messages
-        recent_history = [msg for msg in chat_history[-10:] if chat_history and msg.id != chat_history[0].id]
-        for msg in recent_history:
-            messages.append({"role": msg.role, "content": msg.content})
+        messages.extend(retrieve_chat_history(session_id, config.CHAT_HISTORY_LIMIT, skip_first=True))
             
         messages.append({"role": "user", "content": question})
 
     # Save user message to database
-    user_msg = ChatMessage(session_id=session_id, role='user', content=question)
-    db.session.add(user_msg)
-    db.session.commit()
+    save_chat_message(session_id, 'user', question)
 
     def generate():
         from app import app
@@ -241,23 +235,20 @@ Context from document:
                 yield chunk
             
             # Save assistant response to DB
-            assistant_msg = ChatMessage(session_id=session_id, role='assistant', content=full_answer)
-            db.session.add(assistant_msg)
-            db.session.commit()
+            save_chat_message(session_id, 'assistant', full_answer)
 
     return Response(generate(), mimetype='text/event-stream')
 
 @doc_bp.route('/session/<session_id>/clear', methods=['POST'])
 def clear_doc_session(session_id):
-    session = DocumentSession.query.get(session_id)
+    session = DocumentSessionRepository.get_by_id(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
         
     # Reset conversation history but keep the first message (greeting)
-    first_msg = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).first()
-    if first_msg:
-        ChatMessage.query.filter(ChatMessage.session_id == session_id, ChatMessage.id != first_msg.id).delete()
-    db.session.commit()
+    messages = ChatMessageRepository.get_messages_by_session_id(session_id)
+    if messages:
+        ChatMessageRepository.delete_messages(session_id, exclude_message_id=messages[0].id)
     return jsonify({"success": True})
 
 @doc_bp.route('/files/<filename>', methods=['GET'])

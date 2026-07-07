@@ -74,9 +74,10 @@ def call_ollama(messages, model=None, stream=False):
 def analyze_with_ollama(text, filename, model=None, content_type="document", language="en"):
     """Send text content to Ollama for initial analysis."""
     model = model or config.DEFAULT_MODEL
-    max_chars = 15000
+    max_chars = config.MAX_TEXT_CHARS
     if len(text) > max_chars:
         text = text[:max_chars] + "\n\n...[truncated]"
+
 
     # Determine language instruction
     lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."

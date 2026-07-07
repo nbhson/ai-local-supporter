@@ -17,40 +17,39 @@ def is_image_file(filepath):
     ext = filepath.rsplit('.', 1)[1].lower() if '.' in filepath else ''
     return ext in config.IMAGE_EXTENSIONS
 
+from services.extractor_service import ExtractorFactory
+
 def extract_text_from_image_ocr(filepath):
     """Extract text from image using Tesseract OCR."""
-    try:
-        img = Image.open(filepath)
-        text = pytesseract.image_to_string(img, lang='vie+eng')
-        return text.strip() if text.strip() else None
-    except Exception as e:
-        return f"OCR Error: {str(e)}"
+    extractor = ExtractorFactory.get_extractor(filepath)
+    if extractor:
+        try:
+            text = extractor.extract(filepath)
+            return text if text else None
+        except Exception as e:
+            return f"OCR Error: {str(e)}"
+    return None
 
 def extract_text_from_file(filepath):
-    ext = filepath.rsplit('.', 1)[1].lower() if '.' in filepath else ''
     try:
-        if ext in ('txt', 'md', 'csv', 'json', 'xml', 'yaml', 'yml'):
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                return f.read()
-        elif ext == 'pdf':
-            pages = []
-            with open(filepath, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
-                for page in reader.pages:
-                    pages.append(page.extract_text() or "")
-            return "\n".join(pages)
-        elif ext in ('docx', 'doc'):
-            doc = docx.Document(filepath)
-            return "\n".join([para.text for para in doc.paragraphs])
-        elif ext in config.IMAGE_EXTENSIONS:
-            return None  # Will be handled by vision model
-        else:
+        extractor = ExtractorFactory.get_extractor(filepath)
+        if not extractor:
             return None
+        # Image extraction is handled by vision model directly unless falling back to OCR,
+        # which is checked explicitly in celery task or done via extract_text_from_image_ocr.
+        # But if called directly, we extract:
+        if is_image_file(filepath):
+            return None
+        return extractor.extract(filepath)
     except Exception as e:
         return f"Error extracting text: {str(e)}"
 
-def resize_and_compress_image(filepath, max_size=(1024, 1024), quality=85):
+def resize_and_compress_image(filepath, max_size=None, quality=None):
     """Resize image to reduce base64 size."""
+    if max_size is None:
+        max_size = config.IMAGE_COMPRESS_MAX_SIZE
+    if quality is None:
+        quality = config.IMAGE_COMPRESS_QUALITY
     try:
         with Image.open(filepath) as img:
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
@@ -69,8 +68,9 @@ def cleanup_old_uploads(upload_dir):
         for filename in os.listdir(upload_dir):
             filepath = os.path.join(upload_dir, filename)
             if os.path.isfile(filepath):
-                if os.stat(filepath).st_mtime < now - 24 * 3600:
+                if os.stat(filepath).st_mtime < now - config.CLEANUP_EXPIRE_SECONDS:
                     os.remove(filepath)
                     logging.info(f"Cleaned up old file: {filename}")
     except Exception as e:
         logging.error(f"Error in cleanup: {e}")
+

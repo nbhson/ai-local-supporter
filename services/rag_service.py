@@ -32,8 +32,8 @@ def index_document(session_id, text):
     
     # 1. Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        chunk_size=config.RAG_CHUNK_SIZE,
+        chunk_overlap=config.RAG_CHUNK_OVERLAP
     )
     chunks = text_splitter.split_text(text)
     
@@ -63,8 +63,10 @@ def index_document(session_id, text):
         )
     return len(ids)
 
-def retrieve_context(session_id, query, top_k=4):
+def retrieve_context(session_id, query, top_k=None):
     """Find the most similar chunks from ChromaDB for the given query."""
+    if top_k is None:
+        top_k = config.RAG_TOP_K
     query_vector = get_ollama_embedding(query)
     if not query_vector:
         return ""
@@ -83,3 +85,4 @@ def retrieve_context(session_id, query, top_k=4):
     except Exception as e:
         print(f"Error retrieving context for session {session_id}: {e}")
         return ""
+

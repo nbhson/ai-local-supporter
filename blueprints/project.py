@@ -9,8 +9,12 @@ from flask import Blueprint, request, jsonify, Response
 
 import config
 from services.database import db
-from services.models import ProjectSession, ChatMessage
-from services.ollama_service import call_ollama
+from services.models import ProjectSession
+from services.agent_service import (
+    scan_directory_and_stats, get_simple_tree_str, generate_agent_stream
+)
+from services.errors import SessionNotFoundError, InvalidRequestError
+from services.repositories import ProjectSessionRepository
 
 project_bp = Blueprint('project', __name__)
 
@@ -78,36 +82,7 @@ def init_project():
     
     session_id = uuid.uuid4().hex
     
-    if local_path:
-        # Check if local path exists
-        if not os.path.exists(local_path):
-            return jsonify({"error": f"Thư mục không tồn tại: {local_path}" if ui_language == 'vi' else f"Directory does not exist: {local_path}"}), 400
-        if not os.path.isdir(local_path):
-            return jsonify({"error": f"Đường dẫn không phải là thư mục: {local_path}" if ui_language == 'vi' else f"Path is not a directory: {local_path}"}), 400
-            
-        try:
-            tree, stats = scan_directory_and_stats(local_path, local_path)
-            
-            session = ProjectSession(
-                session_id=session_id,
-                project_path=local_path,
-                is_local=True,
-                status='ready',
-                model=model,
-                ui_language=ui_language
-            )
-            db.session.add(session)
-            db.session.commit()
-            
-            return jsonify({
-                "session_id": session_id,
-                "is_local": True,
-                "tree": tree,
-                "stats": stats
-            })
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-    else:
+    if not local_path:
         # Browser upload flow initialization
         session = ProjectSession(
             session_id=session_id,
@@ -116,18 +91,48 @@ def init_project():
             model=model,
             ui_language=ui_language
         )
-        db.session.add(session)
-        db.session.commit()
+        ProjectSessionRepository.save(session)
         return jsonify({
             "session_id": session_id,
             "is_local": False
         })
 
+    # Local path flow
+    if not os.path.exists(local_path):
+        error_msg = f"Thư mục không tồn tại: {local_path}" if ui_language == 'vi' else f"Directory does not exist: {local_path}"
+        raise InvalidRequestError(error_msg)
+    if not os.path.isdir(local_path):
+        error_msg = f"Đường dẫn không phải là thư mục: {local_path}" if ui_language == 'vi' else f"Path is not a directory: {local_path}"
+        raise InvalidRequestError(error_msg)
+        
+    try:
+        tree, stats = scan_directory_and_stats(local_path, local_path)
+        
+        session = ProjectSession(
+            session_id=session_id,
+            project_path=local_path,
+            is_local=True,
+            status='ready',
+            model=model,
+            ui_language=ui_language
+        )
+        ProjectSessionRepository.save(session)
+        
+        return jsonify({
+            "session_id": session_id,
+            "is_local": True,
+            "tree": tree,
+            "stats": stats
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @project_bp.route('/<session_id>/upload', methods=['POST'])
 def upload_project_files(session_id):
-    session = ProjectSession.query.get(session_id)
+    session = ProjectSessionRepository.get_by_id(session_id)
     if not session:
-        return jsonify({"error": "Session not found"}), 404
+        raise SessionNotFoundError()
         
     files = request.files.getlist('files[]')
     paths = request.form.getlist('paths[]')
@@ -161,10 +166,10 @@ def upload_project_files(session_id):
             dest_filepath = os.path.join(project_dir, rel_path)
             os.makedirs(os.path.dirname(dest_filepath), exist_ok=True)
             file.save(dest_filepath)
-            
+        
         session.project_path = project_dir
         session.status = 'ready'
-        db.session.commit()
+        ProjectSessionRepository.save(session)
         
         tree, stats = scan_directory_and_stats(project_dir, project_dir)
         
@@ -175,23 +180,21 @@ def upload_project_files(session_id):
         })
     except Exception as e:
         session.status = 'failed'
-        db.session.commit()
+        ProjectSessionRepository.save(session)
         logging.exception("Error in project upload")
         return jsonify({"error": str(e)}), 500
 
 @project_bp.route('/<session_id>/file', methods=['GET'])
 def get_project_file(session_id):
-    session = ProjectSession.query.get(session_id)
+    session = ProjectSessionRepository.get_by_id(session_id)
     if not session:
-        return jsonify({"error": "Session not found"}), 404
+        raise SessionNotFoundError()
         
     rel_path = request.args.get('path', '').strip()
     if not rel_path:
-        return jsonify({"error": "File path is required"}), 400
-        
-    # Prevent directory traversal
+        raise InvalidRequestError("File path is required")
     if '..' in rel_path or rel_path.startswith('/'):
-        return jsonify({"error": "Invalid file path"}), 400
+        raise InvalidRequestError("Invalid file path")
         
     filepath = os.path.join(session.project_path, rel_path)
     if not os.path.exists(filepath):
@@ -215,18 +218,18 @@ def get_project_file(session_id):
 
 @project_bp.route('/<session_id>/write_file', methods=['POST'])
 def write_project_file(session_id):
-    session = ProjectSession.query.get(session_id)
+    session = ProjectSessionRepository.get_by_id(session_id)
     if not session:
-        return jsonify({"error": "Session not found"}), 404
+        raise SessionNotFoundError()
         
     data = request.json or {}
     rel_path = data.get('path', '').strip()
     content = data.get('content', '')
     
     if not rel_path:
-        return jsonify({"error": "File path is required"}), 400
+        raise InvalidRequestError("File path is required")
     if '..' in rel_path or rel_path.startswith('/'):
-        return jsonify({"error": "Invalid file path"}), 400
+        raise InvalidRequestError("Invalid file path")
         
     filepath = os.path.join(session.project_path, rel_path)
     try:
@@ -240,9 +243,9 @@ def write_project_file(session_id):
 
 @project_bp.route('/<session_id>/scan', methods=['GET'])
 def rescan_project(session_id):
-    session = ProjectSession.query.get(session_id)
+    session = ProjectSessionRepository.get_by_id(session_id)
     if not session:
-        return jsonify({"error": "Session not found"}), 404
+        raise SessionNotFoundError()
     try:
         tree, stats = scan_directory_and_stats(session.project_path, session.project_path)
         return jsonify({
@@ -252,7 +255,11 @@ def rescan_project(session_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def get_simple_tree_str(nodes, depth=0, max_depth=2, max_entries_per_dir=30):
+def get_simple_tree_str(nodes, depth=0, max_depth=None, max_entries_per_dir=None):
+    if max_depth is None:
+        max_depth = config.AGENT_MAX_DEPTH
+    if max_entries_per_dir is None:
+        max_entries_per_dir = config.AGENT_MAX_ENTRIES_PER_DIR
     if depth > max_depth:
         return []
     lines = []
@@ -423,7 +430,7 @@ def execute_agent_tool(tool_name, args, project_path):
 
 @project_bp.route('/<session_id>/chat', methods=['POST'])
 def chat_project(session_id):
-    session = ProjectSession.query.get(session_id)
+    session = ProjectSessionRepository.get_by_id(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
     project_path = session.project_path
@@ -437,8 +444,6 @@ def chat_project(session_id):
     if not question:
         return jsonify({"error": "Question is empty"}), 400
         
-    lang_instruction = "Respond in English." if language == "en" else "Hãy phản hồi bằng Tiếng Việt."
-    
     # Read context files content
     context_str = ""
     if context_files:
@@ -454,7 +459,6 @@ def chat_project(session_id):
                 try:
                     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
-                    # Truncate large files to save context window (keep first 8000 characters)
                     if len(content) > 8000:
                         content = content[:8000] + "\n\n...[content truncated to save context]..."
                     context_str_parts.append(f"\nFile: `{rel_path}`\n```\n{content}\n```")
@@ -462,202 +466,24 @@ def chat_project(session_id):
                     context_str_parts.append(f"\nFile: `{rel_path}` (Error reading content: {str(e)})")
         context_str = "\n".join(context_str_parts)
 
-    # Get initial project tree (limit depth to 2 for context)
-    tree_nodes, _ = scan_directory_and_stats(project_path, project_path, max_depth=2)
+    # Get initial project tree (limit depth for context)
+    tree_nodes, _ = scan_directory_and_stats(project_path, project_path, max_depth=config.AGENT_MAX_DEPTH)
     tree_str = "\n".join(get_simple_tree_str(tree_nodes))
     
-    if agent_mode:
-        system_prompt = f"""You are a professional AI Software Engineering Agent helping the user work on a local project workspace.
-You have direct read/write access to the files and can execute terminal commands within this directory.
-{lang_instruction}
-
-CURRENT DIRECTORY TREE STRUCTURE:
-```
-{tree_str}
-```
-{context_str}
-
-YOUR WORKFLOW:
-1. Understand the user's request.
-2. Outline your plan of actions in your thought process.
-3. Perform actions step-by-step using the following TOOL CALLS.
-4. ONLY call ONE tool at a time in a single turn. After a tool call tag, STOP generating text and wait for the tool output from the system.
-5. Once you have finished all tasks and verified them, output [FINISH] with a final explanation of the changes.
-
-TOOL CALL SYNTAX:
-To call a tool, you MUST output the exact tag format at the very end of your response:
-
-- Read a file's content:
-  [READ_FILE: path/to/file.ext]
-- Write/overwrite a file:
-  [WRITE_FILE: path/to/file.ext]
-  ```language
-  // full code content
-  ```
-- List directory contents:
-  [LIST_DIR: path/to/dir] (use "." for root)
-- Search for keyword in filenames or contents:
-  [SEARCH_FILES: keyword]
-- Run a terminal command (e.g. run test, compile, lint, syntax check):
-  [RUN_COMMAND: command]
-- Mark the task as fully completed:
-  [FINISH]
-
-RULES:
-- When writing files, ALWAYS output the FULL file content in code block.
-- Paths must be relative to the project root (no leading '/').
-- Do not output multiple tool calls in one turn. Output exactly ONE tool call tag at the end of your response when you need info or action.
-- For thought process, keep it extremely concise (1-2 sentences) inside <think>...</think>. For simple greetings or casual chat, SKIP the thought process and reply immediately.
-- CRITICAL: You must ONLY read files that actually exist in the project. Check the "CURRENT DIRECTORY TREE STRUCTURE" list above to verify if a file exists before trying to read it. Do NOT guess, assume, or hallucinate file paths (e.g. project-overview.md, frontend-architecture.md, etc.) if they are not listed in the tree.
-- CRITICAL: If a file's content is already provided in the ADDITIONAL CONTEXT, DO NOT use [READ_FILE] on it and DO NOT print its code in your response. Answer the user directly!
-- If the user is only asking a question, explanation, or general query that does NOT require modifying files or running commands, answer the query directly and append [FINISH] at the end of your response. Do NOT call other tools like [READ_FILE] or [LIST_DIR] unnecessarily.
-"""
-    else:
-        system_prompt = f"""You are a helpful software engineering assistant helping the user work on a local project workspace.
-{lang_instruction}
-
-CURRENT DIRECTORY TREE STRUCTURE:
-```
-{tree_str}
-```
-{context_str}
-
-Answer the user's questions about the project files directly, explain code, or answer general queries.
-Since you are in direct chat mode, do NOT use any tool call tags such as [READ_FILE], [WRITE_FILE], [LIST_DIR], [SEARCH_FILES], [RUN_COMMAND], or [FINISH].
-Provide clear, well-structured explanations and code suggestions where appropriate.
-For thought process, keep it extremely concise (1-2 sentences) inside <think>...</think>. For simple greetings or casual chat, SKIP the thought process and reply immediately.
-"""
-
-    messages = [{"role": "system", "content": system_prompt}]
-    
-    # Retrieve chat history (max 8 messages)
-    chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
-    for msg in chat_history[-8:]:
-        content = msg.content
-        if len(content) > 3000:
-            content = content[:3000] + "\n\n...[content truncated in history to save context]..."
-        messages.append({"role": msg.role, "content": content})
+    # Delegate stream generation to services/agent_service.py
+    def stream_response():
+        return generate_agent_stream(
+            session_id=session_id,
+            project_path=project_path,
+            question=question,
+            language=language,
+            model=model,
+            context_str=context_str,
+            tree_str=tree_str,
+            agent_mode=agent_mode
+        )
         
-    # Save user message to history
-    user_msg = ChatMessage(session_id=session_id, role='user', content=question)
-    db.session.add(user_msg)
-    db.session.commit()
-    
-    # Append user question
-    messages.append({"role": "user", "content": question})
-    
-    def generate():
-        from app import app
-        with app.app_context():
-            max_iterations = 10 if agent_mode else 1
-            initial_messages_count = len(messages)
-
-            
-            def make_sse(event_type, **kwargs):
-                payload = json.dumps({'type': event_type, **kwargs})
-                padding = ":" + " " * 1024 + "\n"
-                return f"data: {payload}\n\n{padding}"
-            
-            for iteration in range(max_iterations):
-                # Send iteration status
-                status_msg = f"AI is thinking (Loop {iteration+1}/10)..." if language == 'en' else f"AI đang suy nghĩ (Vòng lặp {iteration+1}/10)..."
-                yield make_sse('agent_status', status=status_msg)
-                time.sleep(0.1) # Give OS a moment to flush the socket
-                
-                # Call Ollama
-                current_answer = ""
-                generator = call_ollama(messages, model, stream=True)
-                
-                for chunk in generator:
-                    if chunk.startswith("data: "):
-                        data_str = chunk[6:].strip()
-                        if data_str != "[DONE]":
-                            try:
-                                data_json = json.loads(data_str)
-                                if "content" in data_json:
-                                    content = data_json["content"]
-                                    current_answer += content
-                                    yield make_sse('content', content=content)
-                                elif "error" in data_json:
-                                    error_msg = data_json["error"]
-                                    yield make_sse('content', content=f"❌ **Error:** {error_msg}")
-                            except:
-                                pass
-                
-                # Append assistant response to messages history
-                messages.append({"role": "assistant", "content": current_answer})
-                
-                # Parse tool call
-                tool_call = parse_tool_call(current_answer)
-                if not tool_call:
-                    # Finish loop if no tool call is output
-                    yield make_sse('agent_status', status='Finished (No tool call)' if language == 'en' else 'Hoàn thành (Không có tool call)')
-                    break
-                    
-                tool_name = tool_call['tool']
-                tool_args = tool_call['args']
-                
-                # Yield tool call event
-                yield make_sse('tool_call', tool=tool_name, args=tool_args)
-                
-                tool_status = f"Running tool {tool_name}..." if language == 'en' else f"Đang chạy tool {tool_name}..."
-                if tool_name == 'READ_FILE':
-                    tool_status = f"Reading file: {tool_args.get('path')}..." if language == 'en' else f"Đang đọc file: {tool_args.get('path')}..."
-                elif tool_name == 'WRITE_FILE':
-                    tool_status = f"Writing file: {tool_args.get('path')}..." if language == 'en' else f"Đang ghi file: {tool_args.get('path')}..."
-                elif tool_name == 'RUN_COMMAND':
-                    tool_status = f"Running command: {tool_args.get('command')}..." if language == 'en' else f"Đang chạy lệnh: {tool_args.get('command')}..."
-                yield make_sse('agent_status', status=tool_status)
-                time.sleep(0.1) # Give OS a moment to flush the socket
-                
-                if tool_name == 'FINISH':
-                    yield make_sse('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
-                    break
-                
-                # Execute tool
-                tool_result = execute_agent_tool(tool_name, tool_args, project_path)
-                
-                # Yield tool result event
-                # Keep output safe, limit size sent over SSE
-                display_result = tool_result
-                if len(display_result) > 5000:
-                    display_result = display_result[:5000] + "\n...[output truncated due to length]"
-                yield make_sse('tool_result', tool=tool_name, args=tool_args, result=display_result)
-                
-                post_status = f"Finished. AI is analyzing results..." if language == 'en' else f"Đã chạy xong tool. AI đang phân tích kết quả..."
-                if tool_name == 'READ_FILE':
-                    post_status = f"Read finished. AI is analyzing file..." if language == 'en' else f"Đã đọc file xong. AI đang phân tích..."
-                elif tool_name == 'WRITE_FILE':
-                    post_status = f"Write finished. AI is validating..." if language == 'en' else f"Đã ghi file xong. AI đang kiểm tra..."
-                elif tool_name == 'RUN_COMMAND':
-                    post_status = f"Command finished. AI is analyzing output..." if language == 'en' else f"Đã chạy lệnh xong. AI đang phân tích kết quả..."
-                yield make_sse('agent_status', status=post_status)
-                time.sleep(0.1) # Give OS a moment to flush the socket
-                
-                # Append result to messages history for next turn
-                # Truncate content to save context and speed up Ollama prompt evaluation
-                model_tool_result = tool_result
-                if len(model_tool_result) > 8000:
-                    model_tool_result = model_tool_result[:8000] + "\n\n...[content truncated to save context]..."
-                
-                messages.append({
-                    "role": "user",
-                    "content": f"Tool execution result for [{tool_name}]:\n{model_tool_result}\n\nPlease proceed to the next step."
-                })
-            
-            # Save final response summary to SQLite
-            final_summary = ""
-            for msg in messages[initial_messages_count:]:
-                if msg["role"] == "assistant":
-                    final_summary += msg["content"] + "\n\n"
-            
-            assistant_msg = ChatMessage(session_id=session_id, role='assistant', content=final_summary.strip())
-            db.session.add(assistant_msg)
-            db.session.commit()
-            
-            yield "data: [DONE]\n\n"
-            
-    response = Response(generate(), mimetype='text/event-stream')
+    response = Response(stream_response(), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
     return response

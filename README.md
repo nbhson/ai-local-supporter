@@ -223,26 +223,35 @@ Cấu trúc dự án đã được tối ưu hóa theo dạng Module hóa để 
 
 ```
 ai-local-support/
-├── app.py                  # Khởi chạy Flask Web Server & API
-├── celery_app.py           # Cấu hình khởi tạo Celery App
+├── app.py                  # Khởi chạy ứng dụng Flask
+├── app_factory.py          # Khởi tạo Flask Web Server (Application Factory) & Đăng ký Blueprints
+├── celery_app.py           # Cấu hình khởi tạo Celery App & Tự động lồng Flask app context
 ├── tasks.py                # Định nghĩa các tác vụ Celery chạy ngầm (xử lý file, OCR, RAG Indexing)
 ├── config.py               # Các cấu hình tham số hệ thống (model, db path, upload limit...)
 ├── requirements.txt        # Danh sách các thư viện Python phụ thuộc
 ├── README.md               # Hướng dẫn cài đặt & sử dụng
 ├── INSTALLATION.md         # Hướng dẫn cài đặt chi tiết trên macOS & Windows
 ├── ARCHITECTURE.md         # Tài liệu giải thích kiến trúc chi tiết của dự án
-├── blueprints/             # Quản lý các API endpoint được phân tách theo module
+├── blueprints/             # Quản lý các API endpoint được phân tách theo module (Controller Layer)
 │   ├── __init__.py
 │   ├── doc.py              # Xử lý API liên quan đến Tài liệu (Upload, Chat RAG, Trạng thái)
-│   ├── code.py             # Xử lý API liên quan đến Code (Phân tích, Chat Code)
-│   └── chat.py             # Xử lý API liên quan đến Trò chuyện tự do (Khởi tạo, Chat, Xóa session)
-├── services/               # Lớp xử lý logic nghiệp vụ nghiệp vụ (Business Logic)
+│   ├── project.py          # Xử lý API liên quan đến Dự án (Mở dự án, Upload, File, Chat/Agent)
+│   └── chat.py             # Xử lý API liên quan đến Trò chuyện tự do & Code (Khởi tạo, Chat, Xóa session)
+├── services/               # Lớp xử lý logic nghiệp vụ và dữ liệu (Service & Repository Layers)
 │   ├── __init__.py
 │   ├── database.py         # Khởi tạo instance SQLAlchemy
 │   ├── models.py           # Định nghĩa cấu trúc các bảng Database (SQLite Schema)
+│   ├── repositories.py     # Lớp truy xuất Database SQLite (Repository Pattern)
+│   ├── helper_service.py   # Các hàm tiện ích dùng chung (SSE formatting, language, chat history)
+│   ├── agent_service.py    # Quản lý logic chạy ReAct Agent loop của Coding Agent
+│   ├── agent_tool_service.py # Định nghĩa danh sách các công cụ của Agent (Command Pattern)
+│   ├── extractor_service.py # Xử lý trích xuất văn bản tài liệu (Strategy & Factory Pattern)
 │   ├── document_service.py # Xử lý đọc file PDF, Word, TXT, nén ảnh, chạy Tesseract OCR
 │   ├── ollama_service.py   # Tích hợp và gọi các API kết nối Ollama Local
-│   └── rag_service.py      # Xử lý nhúng vector và tìm kiếm ngữ cảnh với ChromaDB
+│   ├── rag_service.py      # Xử lý nhúng vector và tìm kiếm ngữ cảnh với ChromaDB
+│   └── errors.py           # Định nghĩa các Exception tùy chỉnh của hệ thống
+├── tests/                  # Thư mục kiểm thử tự động
+│   └── test_basic.py       # Bộ kiểm thử hồi quy cơ bản bằng Pytest
 ├── templates/              # Thư mục chứa giao diện HTML
 │   └── index.html          # Giao diện chính ứng dụng Single Page
 ├── static/                 # Thư mục tài nguyên tĩnh
@@ -250,6 +259,7 @@ ai-local-support/
 │   └── app.js              # Xử lý logic frontend và streaming kết quả từ API
 ├── uploads/                # Thư mục chứa file upload (được tạo tự động)
 └── chroma_db/              # Thư mục lưu trữ database vector ChromaDB (được tạo tự động)
+
 ```
 
 ## 🔌 API Endpoints
@@ -265,11 +275,21 @@ ai-local-support/
 ### Code Module
 | Method | Endpoint | Mô tả |
 |--------|----------|-------|
-| POST | `/api/code/analyze` | Gửi code để phân tích ban đầu (bắt đầu một session) |
-| POST | `/api/code/chat` | Chat/hỏi đáp về logic, lỗi, tối ưu hóa của đoạn code trong session |
-| POST | `/api/code/session/<session_id>/clear` | Xóa lịch sử chat về đoạn code trong session |
+| POST | `/api/chat/code/analyze` | Gửi code để phân tích ban đầu (bắt đầu một session) |
+| POST | `/api/chat/code/chat` | Chat/hỏi đáp về logic, lỗi, tối ưu hóa của đoạn code trong session |
+| POST | `/api/chat/code/session/<session_id>/clear` | Xóa lịch sử chat về đoạn code trong session |
 
-### Chat Module
+### Project Module (Agent Workspace)
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/project/init` | Khởi tạo dự án hoặc mở thư mục local |
+| POST | `/api/project/<session_id>/upload` | Tải lên thư mục dự án qua trình duyệt |
+| GET | `/api/project/<session_id>/file` | Đọc nội dung tệp tin trong dự án |
+| POST | `/api/project/<session_id>/write_file` | Ghi đè/tạo mới tệp tin trong dự án |
+| GET | `/api/project/<session_id>/scan` | Quét lại cấu trúc cây thư mục |
+| POST | `/api/project/<session_id>/chat` | Gửi yêu cầu lập trình tới AI Coding Agent (ReAct) |
+
+### Chat Module (Free Chat)
 | Method | Endpoint | Mô tả |
 |--------|----------|-------|
 | POST | `/api/chat/init` | Khởi tạo một phiên trò chuyện tự do mới |
