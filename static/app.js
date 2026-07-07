@@ -281,7 +281,8 @@ const translations = {
         welcomeChat: 'Free Chat',
         welcomeChatDesc: 'Ask anything you want with AI',
         welcomeProject: 'Project Workspace',
-        welcomeProjectDesc: 'Open or upload a folder to browse and generate code'
+        welcomeProjectDesc: 'Open or upload a folder to browse and generate code',
+        agentMode: 'Agent Mode (ReAct)'
     },
     vi: {
         uploadText: 'Kéo thả file vào đây',
@@ -313,7 +314,8 @@ const translations = {
         welcomeChat: 'Trò chuyện tự do',
         welcomeChatDesc: 'Hỏi bất cứ điều gì bạn muốn với AI',
         welcomeProject: 'Không gian Dự án',
-        welcomeProjectDesc: 'Mở hoặc upload một thư mục để duyệt code và sinh code'
+        welcomeProjectDesc: 'Mở hoặc upload một thư mục để duyệt code và sinh code',
+        agentMode: 'Chế độ Agent (Tự động)'
     }
 };
 
@@ -354,6 +356,12 @@ function updateUILanguage() {
     const projWelcomeP = document.querySelector('#projectWelcome p');
     if (projWelcomeH2) projWelcomeH2.textContent = t.welcomeProject;
     if (projWelcomeP) projWelcomeP.textContent = t.welcomeProjectDesc;
+
+    const agentModeLabel = document.getElementById('agentModeLabel');
+    if (agentModeLabel) {
+        agentModeLabel.textContent = t.agentMode;
+        agentModeLabel.title = lang === 'vi' ? 'Chế độ tự động chạy các công cụ (đọc, ghi file, chạy lệnh). Tắt đi để chat nhanh hơn.' : 'Automatically execute tools (read/write files, run commands). Turn off for faster chat.';
+    }
 
     // Update chat input placeholder
     updateChatInput();

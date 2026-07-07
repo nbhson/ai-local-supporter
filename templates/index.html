@@ -407,9 +407,15 @@
                     <div class="chat-resizer" id="chatResizer"></div>
                     
                     <div class="workspace-chat-pane">
-                        <div class="workspace-chat-header">
-                            <span class="material-symbols-rounded text-indigo">smart_toy</span>
-                            <h3>AI Coding Assistant</h3>
+                        <div class="workspace-chat-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="material-symbols-rounded text-indigo">smart_toy</span>
+                                <h3>AI Coding Assistant</h3>
+                            </div>
+                            <div class="agent-mode-toggle-container" style="display: flex; align-items: center; gap: 6px; padding-right: 6px;">
+                                <input type="checkbox" id="agentModeCheckbox" checked style="cursor: pointer; width: 14px; height: 14px; accent-color: var(--primary-color);">
+                                <label for="agentModeCheckbox" id="agentModeLabel" style="font-size: 0.8rem; font-weight: 500; cursor: pointer; user-select: none;" title="Chế độ tự động chạy các công cụ (đọc, ghi file, chạy lệnh). Tắt đi để chat nhanh hơn.">Agent Mode</label>
+                            </div>
                         </div>
                         <div class="workspace-chat-messages" id="projectChatMessages"></div>
                         <div class="workspace-context-bar" id="workspaceContextBar">

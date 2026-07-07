@@ -692,27 +692,153 @@ function formatProjectMessage(text) {
         return files;
     };
 
-    const detectFilepathFromText = (textBeforeCode) => {
+    const resolveNewFilePath = (candidate, allFiles, activeFilePath) => {
+        if (candidate.includes('/') || candidate.includes('\\')) {
+            return candidate.replace(/\\/g, '/');
+        }
+
+        const extMatch = candidate.match(/^([\w\-]+)/);
+        if (extMatch) {
+            const prefix = extMatch[1].toLowerCase();
+            const similarFile = allFiles.find(f => f.toLowerCase().includes('/' + prefix + '/') || f.split('/').pop().toLowerCase().startsWith(prefix));
+            if (similarFile) {
+                const dir = similarFile.substring(0, similarFile.lastIndexOf('/'));
+                return dir ? `${dir}/${candidate}` : candidate;
+            }
+        }
+
+        if (activeFilePath) {
+            const activeDir = activeFilePath.substring(0, activeFilePath.lastIndexOf('/'));
+            if (activeDir) {
+                const parts = activeDir.split('/');
+                const lastDir = parts[parts.length - 1];
+                const extMatch = candidate.match(/^([\w\-]+)/);
+                if (extMatch && lastDir) {
+                    const prefix = extMatch[1];
+                    const shareNamingConvention = (lastDir.includes('-') && prefix.includes('-')) ||
+                                                 (lastDir.includes('_') && prefix.includes('_')) ||
+                                                 (/[a-z][A-Z]/.test(lastDir) && /[a-z][A-Z]/.test(prefix));
+                    if (shareNamingConvention) {
+                        parts[parts.length - 1] = prefix;
+                        const newDir = parts.join('/');
+                        return `${newDir}/${candidate}`;
+                    }
+                }
+                return `${activeDir}/${candidate}`;
+            }
+        }
+        return candidate;
+    };
+
+    const isLanguageCompatible = (lang, filepath) => {
+        if (!filepath) return false;
+        if (!lang) return true; // If no lang is specified, assume it matches
+
+        const ext = filepath.split('.').pop().toLowerCase();
+        const l = lang.toLowerCase();
+
+        const groups = {
+            'ts': ['ts', 'tsx'],
+            'typescript': ['ts', 'tsx'],
+            'js': ['js', 'jsx'],
+            'javascript': ['js', 'jsx'],
+            'json': ['json'],
+            'scss': ['scss', 'sass', 'css'],
+            'sass': ['scss', 'sass', 'css'],
+            'css': ['scss', 'sass', 'css'],
+            'html': ['html', 'htm', 'xml'],
+            'py': ['py'],
+            'python': ['py'],
+            'sh': ['sh', 'bash'],
+            'bash': ['sh', 'bash'],
+            'shell': ['sh', 'bash'],
+            'yaml': ['yaml', 'yml'],
+            'yml': ['yaml', 'yml'],
+            'sql': ['sql'],
+            'md': ['md', 'markdown'],
+            'markdown': ['md', 'markdown']
+        };
+
+        if (groups[l]) {
+            return groups[l].includes(ext);
+        }
+        return ext === l;
+    };
+
+    const detectFilepathFromText = (textBeforeCode, blockLang) => {
         if (!textBeforeCode) return null;
         const allFiles = getAllProjectFiles();
         if (allFiles.length === 0) return null;
 
-        const sortedFiles = [...allFiles].sort((a, b) => b.length - a.length);
+        const textLower = textBeforeCode.toLowerCase();
+        let bestMatch = null;
+        let lastIndex = -1;
 
-        for (const filepath of sortedFiles) {
-            if (textBeforeCode.toLowerCase().includes(filepath.toLowerCase())) {
-                return filepath;
+        // 1. Find the occurrence of any file path in the text
+        for (const filepath of allFiles) {
+            const filepathLower = filepath.toLowerCase();
+            const index = textLower.lastIndexOf(filepathLower);
+            if (index !== -1 && index > lastIndex) {
+                if (isLanguageCompatible(blockLang, filepath)) {
+                    lastIndex = index;
+                    bestMatch = { path: filepath, exists: true };
+                }
             }
         }
 
-        for (const filepath of sortedFiles) {
-            const filename = filepath.split('/').pop();
+        // 2. Also check filenames (without full path)
+        for (const filepath of allFiles) {
+            const filename = filepath.split('/').pop().toLowerCase();
             const escapedName = filename.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-            const regex = new RegExp(`(\\b|[\`"'])${escapedName}(\\b|[\`"'])`, 'i');
-            if (regex.test(textBeforeCode)) {
-                return filepath;
+            const regex = new RegExp(`(\\b|[\`"'])${escapedName}(\\b|[\`"'])`, 'gi');
+            let match;
+            while ((match = regex.exec(textBeforeCode)) !== null) {
+                const index = match.index;
+                if (index > lastIndex) {
+                    if (isLanguageCompatible(blockLang, filepath)) {
+                        lastIndex = index;
+                        bestMatch = { path: filepath, exists: true };
+                    }
+                }
             }
         }
+
+        // If we found a compatible match in existing files, return it
+        if (bestMatch) {
+            return bestMatch;
+        }
+
+        // 3. Try to match mentioned filenames with common programming extensions (even if they don't exist yet)
+        const filePatternRegex = /(?:\b|[\`"'])([\w\-./\\]+\.(?:ts|js|tsx|jsx|html|css|scss|sass|less|json|py|md|sh|yaml|yml|sql|txt|go|rs|c|cpp|h|java|kt|gradle|properties|xml|conf|cfg|ini|dockerfile|gitignore))(?:\b|[\`"'])/gi;
+        let match;
+        let lastCandidate = null;
+        let lastCandidateIndex = -1;
+        while ((match = filePatternRegex.exec(textBeforeCode)) !== null) {
+            const candidate = match[1];
+            const index = match.index;
+            if (index > lastCandidateIndex) {
+                if (isLanguageCompatible(blockLang, candidate)) {
+                    lastCandidateIndex = index;
+                    lastCandidate = candidate;
+                }
+            }
+        }
+
+        if (lastCandidate) {
+            const candidateLower = lastCandidate.toLowerCase();
+            const existingMatch = allFiles.find(f => 
+                f.toLowerCase() === candidateLower || 
+                f.toLowerCase().endsWith('/' + candidateLower) || 
+                f.toLowerCase().endsWith('\\' + candidateLower)
+            );
+            if (existingMatch) {
+                return { path: existingMatch, exists: true };
+            }
+
+            const resolvedPath = resolveNewFilePath(lastCandidate, allFiles, snapshotActiveFile);
+            return { path: resolvedPath, exists: false };
+        }
+
         return null;
     };
 
@@ -732,8 +858,19 @@ function formatProjectMessage(text) {
         } else {
             // Auto detect from preceding text
             const textBefore = formatted.substring(Math.max(0, offset - 350), offset);
-            const detectedPath = detectFilepathFromText(textBefore);
-            targetPath = detectedPath || snapshotActiveFile;
+            const detected = detectFilepathFromText(textBefore, lang);
+            if (detected) {
+                targetPath = detected.path;
+                action = detected.exists ? 'modify' : 'create';
+            } else {
+                if (isLanguageCompatible(lang, snapshotActiveFile)) {
+                    targetPath = snapshotActiveFile;
+                    action = 'modify';
+                } else {
+                    targetPath = null;
+                    action = 'modify';
+                }
+            }
         }
 
         const blockIndex = proposedBlocks.length;
@@ -1122,6 +1259,9 @@ async function sendProjectMessage() {
 
     showTypingIndicator(projectChatMessages);
 
+    const agentModeCheckbox = document.getElementById('agentModeCheckbox');
+    const agentMode = agentModeCheckbox ? agentModeCheckbox.checked : true;
+
     try {
         const res = await fetch(`/api/project/${state.project.sessionId}/chat`, {
             method: 'POST',
@@ -1130,7 +1270,8 @@ async function sendProjectMessage() {
                 question: question,
                 model: modelSelect.value,
                 language: state.language,
-                context_files: Array.from(state.project.selectedFiles)
+                context_files: Array.from(state.project.selectedFiles),
+                agent_mode: agentMode
             })
         });
 

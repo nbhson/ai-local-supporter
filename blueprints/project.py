@@ -21,64 +21,53 @@ EXCLUDE_DIRS = {
 }
 EXCLUDE_FILES = {'.DS_Store', 'Thumbs.db'}
 
-def get_project_stats(project_path):
-    total_files = 0
-    total_size = 0
-    lang_stats = {}
-    
-    for root, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-        
-        for f in files:
-            if f in EXCLUDE_FILES:
-                continue
-            full_path = os.path.join(root, f)
-            try:
-                size = os.path.getsize(full_path)
-                total_size += size
-                total_files += 1
-                
-                _, ext = os.path.splitext(f)
-                ext = ext.lower().strip('.')
-                if not ext:
-                    ext = 'plain text' if f.startswith('.') or f in ('LICENSE', 'Makefile', 'Dockerfile') else 'unknown'
-                lang_stats[ext] = lang_stats.get(ext, 0) + 1
-            except Exception:
-                pass
-                
-    return {
-        "total_files": total_files,
-        "total_size": total_size,
-        "lang_stats": lang_stats
-    }
-
-def scan_directory(current_path, base_path, current_depth=0, max_depth=None):
+def scan_directory_and_stats(current_path, base_path, stats=None, current_depth=0, max_depth=None):
+    if stats is None:
+        stats = {
+            "total_files": 0,
+            "total_size": 0,
+            "lang_stats": {}
+        }
     tree = []
     if max_depth is not None and current_depth > max_depth:
-        return tree
+        return tree, stats
     try:
         entries = sorted(os.scandir(current_path), key=lambda e: (not e.is_dir(), e.name.lower()))
         for entry in entries:
             if entry.is_dir():
                 if entry.name in EXCLUDE_DIRS:
                     continue
+                subtree, _ = scan_directory_and_stats(entry.path, base_path, stats, current_depth + 1, max_depth)
                 tree.append({
                     "name": entry.name,
                     "path": os.path.relpath(entry.path, base_path),
                     "is_dir": True,
-                    "children": scan_directory(entry.path, base_path, current_depth + 1, max_depth)
+                    "children": subtree
                 })
             else:
                 if entry.name in EXCLUDE_FILES:
                     continue
+                rel_path = os.path.relpath(entry.path, base_path)
                 tree.append({
                     "name": entry.name,
-                    "path": os.path.relpath(entry.path, base_path),
+                    "path": rel_path,
                     "is_dir": False
                 })
+                try:
+                    size = entry.stat().st_size
+                    stats["total_size"] += size
+                    stats["total_files"] += 1
+                    
+                    _, ext = os.path.splitext(entry.name)
+                    ext = ext.lower().strip('.')
+                    if not ext:
+                        ext = 'plain text' if entry.name.startswith('.') or entry.name in ('LICENSE', 'Makefile', 'Dockerfile') else 'unknown'
+                    stats["lang_stats"][ext] = stats["lang_stats"].get(ext, 0) + 1
+                except Exception:
+                    pass
     except Exception as e:
         logging.error(f"Error scanning directory {current_path}: {e}")
-    return tree
+    return tree, stats
 
 @project_bp.route('/init', methods=['POST'])
 def init_project():
@@ -97,8 +86,7 @@ def init_project():
             return jsonify({"error": f"Đường dẫn không phải là thư mục: {local_path}" if ui_language == 'vi' else f"Path is not a directory: {local_path}"}), 400
             
         try:
-            stats = get_project_stats(local_path)
-            tree = scan_directory(local_path, local_path)
+            tree, stats = scan_directory_and_stats(local_path, local_path)
             
             session = ProjectSession(
                 session_id=session_id,
@@ -178,8 +166,7 @@ def upload_project_files(session_id):
         session.status = 'ready'
         db.session.commit()
         
-        stats = get_project_stats(project_dir)
-        tree = scan_directory(project_dir, project_dir)
+        tree, stats = scan_directory_and_stats(project_dir, project_dir)
         
         return jsonify({
             "success": True,
@@ -257,8 +244,7 @@ def rescan_project(session_id):
     if not session:
         return jsonify({"error": "Session not found"}), 404
     try:
-        stats = get_project_stats(session.project_path)
-        tree = scan_directory(session.project_path, session.project_path)
+        tree, stats = scan_directory_and_stats(session.project_path, session.project_path)
         return jsonify({
             "tree": tree,
             "stats": stats
@@ -446,6 +432,7 @@ def chat_project(session_id):
     language = data.get('language', 'en')
     model = data.get('model', session.model or config.DEFAULT_MODEL)
     context_files = data.get('context_files', [])
+    agent_mode = data.get('agent_mode', True)
     
     if not question:
         return jsonify({"error": "Question is empty"}), 400
@@ -476,10 +463,11 @@ def chat_project(session_id):
         context_str = "\n".join(context_str_parts)
 
     # Get initial project tree (limit depth to 2 for context)
-    tree_nodes = scan_directory(project_path, project_path, max_depth=2)
+    tree_nodes, _ = scan_directory_and_stats(project_path, project_path, max_depth=2)
     tree_str = "\n".join(get_simple_tree_str(tree_nodes))
     
-    system_prompt = f"""You are a professional AI Software Engineering Agent helping the user work on a local project workspace.
+    if agent_mode:
+        system_prompt = f"""You are a professional AI Software Engineering Agent helping the user work on a local project workspace.
 You have direct read/write access to the files and can execute terminal commands within this directory.
 {lang_instruction}
 
@@ -524,6 +512,21 @@ RULES:
 - CRITICAL: If a file's content is already provided in the ADDITIONAL CONTEXT, DO NOT use [READ_FILE] on it and DO NOT print its code in your response. Answer the user directly!
 - If the user is only asking a question, explanation, or general query that does NOT require modifying files or running commands, answer the query directly and append [FINISH] at the end of your response. Do NOT call other tools like [READ_FILE] or [LIST_DIR] unnecessarily.
 """
+    else:
+        system_prompt = f"""You are a helpful software engineering assistant helping the user work on a local project workspace.
+{lang_instruction}
+
+CURRENT DIRECTORY TREE STRUCTURE:
+```
+{tree_str}
+```
+{context_str}
+
+Answer the user's questions about the project files directly, explain code, or answer general queries.
+Since you are in direct chat mode, do NOT use any tool call tags such as [READ_FILE], [WRITE_FILE], [LIST_DIR], [SEARCH_FILES], [RUN_COMMAND], or [FINISH].
+Provide clear, well-structured explanations and code suggestions where appropriate.
+For thought process, keep it extremely concise (1-2 sentences) inside <think>...</think>. For simple greetings or casual chat, SKIP the thought process and reply immediately.
+"""
 
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -546,7 +549,7 @@ RULES:
     def generate():
         from app import app
         with app.app_context():
-            max_iterations = 10
+            max_iterations = 10 if agent_mode else 1
             initial_messages_count = len(messages)
 
             
