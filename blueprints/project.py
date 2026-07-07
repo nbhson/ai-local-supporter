@@ -2,6 +2,8 @@ import os
 import uuid
 import json
 import logging
+import re
+import subprocess
 from flask import Blueprint, request, jsonify, Response
 
 import config
@@ -11,7 +13,11 @@ from services.ollama_service import call_ollama
 
 project_bp = Blueprint('project', __name__)
 
-EXCLUDE_DIRS = {'.git', 'node_modules', '.venv', 'venv', 'env', '.idea', '__pycache__', 'dist', 'build', 'target', '.npm', '.cache'}
+EXCLUDE_DIRS = {
+    '.git', 'node_modules', '.venv', 'venv', 'env', '.idea', '__pycache__', 
+    'dist', 'build', 'target', '.npm', '.cache', '.angular', '.next', '.nuxt',
+    '.sass-cache', '.svelte-kit', '.agents', '.gemini', 'coverage', '.nyc_output'
+}
 EXCLUDE_FILES = {'.DS_Store', 'Thumbs.db'}
 
 def get_project_stats(project_path):
@@ -45,8 +51,10 @@ def get_project_stats(project_path):
         "lang_stats": lang_stats
     }
 
-def scan_directory(current_path, base_path):
+def scan_directory(current_path, base_path, current_depth=0, max_depth=None):
     tree = []
+    if max_depth is not None and current_depth > max_depth:
+        return tree
     try:
         entries = sorted(os.scandir(current_path), key=lambda e: (not e.is_dir(), e.name.lower()))
         for entry in entries:
@@ -57,7 +65,7 @@ def scan_directory(current_path, base_path):
                     "name": entry.name,
                     "path": os.path.relpath(entry.path, base_path),
                     "is_dir": True,
-                    "children": scan_directory(entry.path, base_path)
+                    "children": scan_directory(entry.path, base_path, current_depth + 1, max_depth)
                 })
             else:
                 if entry.name in EXCLUDE_FILES:
@@ -257,71 +265,265 @@ def rescan_project(session_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+def get_simple_tree_str(nodes, depth=0, max_depth=2, max_entries_per_dir=30):
+    if depth > max_depth:
+        return []
+    lines = []
+    for i, node in enumerate(nodes):
+        if i >= max_entries_per_dir:
+            lines.append(f"{'  ' * depth}... (and {len(nodes) - max_entries_per_dir} more items, use LIST_DIR tool to view)")
+            break
+            
+        indent = "  " * depth
+        if node.get("is_dir"):
+            lines.append(f"{indent}📁 {node['name']}/")
+            lines.extend(get_simple_tree_str(node.get("children", []), depth + 1, max_depth, max_entries_per_dir))
+        else:
+            lines.append(f"{indent}📄 {node['name']}")
+    return lines
+
+def parse_tool_call(text):
+    # Match [FINISH]
+    if '[FINISH]' in text:
+        return {'tool': 'FINISH', 'args': {}}
+        
+    # Match [READ_FILE: path]
+    read_match = re.search(r'\[READ_FILE:\s*([^\s\]]+)\]', text)
+    if read_match:
+        return {'tool': 'READ_FILE', 'args': {'path': read_match.group(1)}}
+        
+    # Match [LIST_DIR: path]
+    list_match = re.search(r'\[LIST_DIR:\s*([^\s\]]+)\]', text)
+    if list_match:
+        return {'tool': 'LIST_DIR', 'args': {'path': list_match.group(1)}}
+        
+    # Match [SEARCH_FILES: query]
+    search_match = re.search(r'\[SEARCH_FILES:\s*([^\]]+)\]', text)
+    if search_match:
+        return {'tool': 'SEARCH_FILES', 'args': {'query': search_match.group(1).strip()}}
+        
+    # Match [RUN_COMMAND: cmd]
+    run_match = re.search(r'\[RUN_COMMAND:\s*([^\]]+)\]', text)
+    if run_match:
+        return {'tool': 'RUN_COMMAND', 'args': {'command': run_match.group(1).strip()}}
+        
+    # Match [WRITE_FILE: path]
+    write_match = re.search(r'\[WRITE_FILE:\s*([^\s\]]+)\]', text)
+    if write_match:
+        path = write_match.group(1)
+        post_text = text[write_match.end():]
+        code_block = re.search(r'```(?:\w*)\n([\s\S]*?)```', post_text)
+        if code_block:
+            content = code_block.group(1)
+            return {'tool': 'WRITE_FILE', 'args': {'path': path, 'content': content}}
+        else:
+            return {'tool': 'WRITE_FILE', 'args': {'path': path, 'content': post_text.strip()}}
+            
+    return None
+
+def execute_agent_tool(tool_name, args, project_path):
+    if tool_name == 'READ_FILE':
+        path = args.get('path', '').strip()
+        if path.startswith('./'):
+            path = path[2:]
+        if '..' in path or path.startswith('/'):
+            return "Error: Invalid path. Path must be relative to project root and cannot contain '..'"
+        filepath = os.path.join(project_path, path)
+        if not os.path.exists(filepath):
+            return f"Error: File not found: {path}"
+        if os.path.isdir(filepath):
+            return f"Error: {path} is a directory. Use LIST_DIR instead."
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            return f"--- Content of {path} ---\n{content}\n----------------"
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+
+    elif tool_name == 'WRITE_FILE':
+        path = args.get('path', '').strip()
+        content = args.get('content', '')
+        if path.startswith('./'):
+            path = path[2:]
+        if '..' in path or path.startswith('/'):
+            return "Error: Invalid path. Path must be relative to project root and cannot contain '..'"
+        filepath = os.path.join(project_path, path)
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return f"Success: File written successfully to {path}"
+        except Exception as e:
+            return f"Error writing file: {str(e)}"
+
+    elif tool_name == 'LIST_DIR':
+        path = args.get('path', '').strip()
+        if path.startswith('./'):
+            path = path[2:]
+        if '..' in path or path.startswith('/'):
+            return "Error: Invalid path"
+        target_path = os.path.join(project_path, path) if path and path != '.' else project_path
+        if not os.path.exists(target_path):
+            return f"Error: Directory not found: {path}"
+        try:
+            entries = []
+            for entry in os.scandir(target_path):
+                if entry.name in EXCLUDE_DIRS or entry.name in EXCLUDE_FILES:
+                    continue
+                rel = os.path.relpath(entry.path, project_path)
+                entries.append(f"{'[DIR]' if entry.is_dir() else '[FILE]'} {rel}")
+            return "\n".join(sorted(entries)) if entries else "Empty directory"
+        except Exception as e:
+            return f"Error listing directory: {str(e)}"
+
+    elif tool_name == 'SEARCH_FILES':
+        query = args.get('query', '').strip()
+        if not query:
+            return "Error: Empty search query"
+        results = []
+        query_lower = query.lower()
+        try:
+            for root, dirs, files in os.walk(project_path):
+                dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+                for f in files:
+                    if f in EXCLUDE_FILES:
+                        continue
+                    rel_path = os.path.relpath(os.path.join(root, f), project_path)
+                    if query_lower in rel_path.lower():
+                        results.append(f"Match in filename: {rel_path}")
+                    filepath = os.path.join(root, f)
+                    if os.path.getsize(filepath) > 500000: # Skip files larger than 500KB to prevent memory hangs
+                        continue
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as file_obj:
+                            content = file_obj.read()
+                            if query_lower in content.lower():
+                                lines = content.split('\n')
+                                for idx, line in enumerate(lines):
+                                    if query_lower in line.lower():
+                                        results.append(f"{rel_path}:{idx+1}: {line.strip()[:120]}")
+                    except:
+                        pass
+            return "\n".join(results[:50]) if results else "No matches found"
+        except Exception as e:
+            return f"Error searching files: {str(e)}"
+
+    elif tool_name == 'RUN_COMMAND':
+        command = args.get('command', '').strip()
+        if not command:
+            return "Error: Empty command"
+        try:
+            res = subprocess.run(
+                command,
+                shell=True,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            output = f"Exit code: {res.returncode}\n"
+            if res.stdout:
+                output += f"STDOUT:\n{res.stdout}\n"
+            if res.stderr:
+                output += f"STDERR:\n{res.stderr}\n"
+            return output
+        except subprocess.TimeoutExpired:
+            return "Error: Command timed out after 30 seconds."
+        except Exception as e:
+            return f"Error executing command: {str(e)}"
+
+    return f"Error: Unknown tool {tool_name}"
+
 @project_bp.route('/<session_id>/chat', methods=['POST'])
 def chat_project(session_id):
     session = ProjectSession.query.get(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
-        
     data = request.json or {}
     question = data.get('question', '').strip()
-    active_file = data.get('active_file', '').strip()
-    selected_files = data.get('selected_files', [])
     language = data.get('language', 'en')
     model = data.get('model', session.model or config.DEFAULT_MODEL)
+    context_files = data.get('context_files', [])
     
     if not question:
         return jsonify({"error": "Question is empty"}), 400
         
-    lang_instruction = "Respond in English." if language == "en" else "Respond in Vietnamese."
+    lang_instruction = "Respond in English." if language == "en" else "Hãy phản hồi bằng Tiếng Việt."
     
-    system_prompt = f"""You are a professional software engineer and an expert AI Coding Assistant.
-You are helping the user work on a programming project.
+    # Read context files content
+    context_str = ""
+    if context_files:
+        context_str_parts = [
+            "\nADDITIONAL CONTEXT FILES SELECTED BY USER:",
+            "CRITICAL: The content of these files is ALREADY provided below. Do NOT output or repeat the code of these files in your response."
+        ]
+        for rel_path in context_files:
+            if not rel_path or '..' in rel_path or rel_path.startswith('/'):
+                continue
+            filepath = os.path.join(session.project_path, rel_path)
+            if os.path.exists(filepath) and os.path.isfile(filepath):
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                        content = f.read()
+                    # Truncate large files to save context window (keep first 8000 characters)
+                    if len(content) > 8000:
+                        content = content[:8000] + "\n\n...[content truncated to save context]..."
+                    context_str_parts.append(f"\nFile: `{rel_path}`\n```\n{content}\n```")
+                except Exception as e:
+                    context_str_parts.append(f"\nFile: `{rel_path}` (Error reading content: {str(e)})")
+        context_str = "\n".join(context_str_parts)
+
+    # Get initial project tree (limit depth to 2 for context)
+    tree_nodes = scan_directory(session.project_path, session.project_path, max_depth=2)
+    tree_str = "\n".join(get_simple_tree_str(tree_nodes))
+    
+    system_prompt = f"""You are a professional AI Software Engineering Agent helping the user work on a local project workspace.
+You have direct read/write access to the files and can execute terminal commands within this directory.
 {lang_instruction}
 
-When providing code updates, optimizations, or generating new code:
-1. Always write the FULL updated code or a CLEAR chunk inside code blocks with correct language syntax identifiers.
-2. Put clear instructions.
-3. If you suggest modifying an existing active file, the client will display "Compare" and "Apply" buttons.
-4. If you suggest CREATING a new file, you MUST write a tag like [CREATE_FILE: path/to/file.ext] directly before the code block.
-   Example:
-   [CREATE_FILE: src/utils.js]
-   ```javascript
-   // code content
-   ```
+CURRENT DIRECTORY TREE STRUCTURE:
+```
+{tree_str}
+```
+{context_str}
+
+YOUR WORKFLOW:
+1. Understand the user's request.
+2. Outline your plan of actions in your thought process.
+3. Perform actions step-by-step using the following TOOL CALLS.
+4. ONLY call ONE tool at a time in a single turn. After a tool call tag, STOP generating text and wait for the tool output from the system.
+5. Once you have finished all tasks and verified them, output [FINISH] with a final explanation of the changes.
+
+TOOL CALL SYNTAX:
+To call a tool, you MUST output the exact tag format at the very end of your response:
+
+- Read a file's content:
+  [READ_FILE: path/to/file.ext]
+- Write/overwrite a file:
+  [WRITE_FILE: path/to/file.ext]
+  ```language
+  // full code content
+  ```
+- List directory contents:
+  [LIST_DIR: path/to/dir] (use "." for root)
+- Search for keyword in filenames or contents:
+  [SEARCH_FILES: keyword]
+- Run a terminal command (e.g. run test, compile, lint, syntax check):
+  [RUN_COMMAND: command]
+- Mark the task as fully completed:
+  [FINISH]
+
+RULES:
+- When writing files, ALWAYS output the FULL file content in code block.
+- Paths must be relative to the project root (no leading '/').
+- Do not output multiple tool calls in one turn. Output exactly ONE tool call tag at the end of your response when you need info or action.
+- For thought process, keep it extremely concise (1-2 sentences) inside <think>...</think>. For simple greetings or casual chat, SKIP the thought process and reply immediately.
+- CRITICAL: You must ONLY read files that actually exist in the project. Check the "CURRENT DIRECTORY TREE STRUCTURE" list above to verify if a file exists before trying to read it. Do NOT guess, assume, or hallucinate file paths (e.g. project-overview.md, frontend-architecture.md, etc.) if they are not listed in the tree.
+- CRITICAL: If a file's content is already provided in the ADDITIONAL CONTEXT, DO NOT use [READ_FILE] on it and DO NOT print its code in your response. Answer the user directly!
 """
 
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Read the active file and selected files as context
-    context_text = ""
-    files_to_read = set()
-    if active_file:
-        files_to_read.add(active_file)
-    if selected_files:
-        files_to_read.update(selected_files)
-        
-    for rel_path in files_to_read:
-        if '..' in rel_path or rel_path.startswith('/'):
-            continue
-        filepath = os.path.join(session.project_path, rel_path)
-        if os.path.exists(filepath) and os.path.isfile(filepath):
-            try:
-                with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-                    file_content = f.read()
-                # Limit size per file context to avoid blowing up context window (max 30k chars per file)
-                if len(file_content) > 30000:
-                    file_content = file_content[:30000] + "\n\n...[file truncated due to length]"
-                context_text += f"\n\n--- File: {rel_path} ---\n{file_content}\n---------------------\n"
-            except Exception as e:
-                logging.warning(f"Could not load file context {rel_path}: {e}")
-                
-    if context_text:
-        messages.append({
-            "role": "system", 
-            "content": f"Here is the context of files from the workspace:\n{context_text}"
-        })
-        
     # Retrieve chat history (max 8 messages)
     chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
     for msg in chat_history[-8:]:
@@ -338,23 +540,112 @@ When providing code updates, optimizations, or generating new code:
     def generate():
         from app import app
         with app.app_context():
-            generator = call_ollama(messages, model, stream=True)
-            full_answer = ""
-            for chunk in generator:
-                if chunk.startswith("data: "):
-                    data_str = chunk[6:].strip()
-                    if data_str != "[DONE]":
-                        try:
-                            data_json = json.loads(data_str)
-                            if "content" in data_json:
-                                full_answer += data_json["content"]
-                        except:
-                            pass
-                yield chunk
+            max_iterations = 10
+            initial_messages_count = len(messages)
+
             
-            # Save AI answer to database
-            assistant_msg = ChatMessage(session_id=session_id, role='assistant', content=full_answer)
+            def make_sse(event_type, **kwargs):
+                payload = json.dumps({'type': event_type, **kwargs})
+                padding = ":" + " " * 1024 + "\n"
+                return f"data: {payload}\n\n{padding}"
+            
+            for iteration in range(max_iterations):
+                # Send iteration status
+                status_msg = f"AI is thinking (Loop {iteration+1}/10)..." if language == 'en' else f"AI đang suy nghĩ (Vòng lặp {iteration+1}/10)..."
+                yield make_sse('agent_status', status=status_msg)
+                
+                # Call Ollama
+                current_answer = ""
+                generator = call_ollama(messages, model, stream=True)
+                
+                for chunk in generator:
+                    if chunk.startswith("data: "):
+                        data_str = chunk[6:].strip()
+                        if data_str != "[DONE]":
+                            try:
+                                data_json = json.loads(data_str)
+                                if "content" in data_json:
+                                    content = data_json["content"]
+                                    current_answer += content
+                                    yield make_sse('content', content=content)
+                                elif "error" in data_json:
+                                    error_msg = data_json["error"]
+                                    yield make_sse('content', content=f"❌ **Error:** {error_msg}")
+                            except:
+                                pass
+                
+                # Append assistant response to messages history
+                messages.append({"role": "assistant", "content": current_answer})
+                
+                # Parse tool call
+                tool_call = parse_tool_call(current_answer)
+                if not tool_call:
+                    # Finish loop if no tool call is output
+                    yield make_sse('agent_status', status='Finished (No tool call)' if language == 'en' else 'Hoàn thành (Không có tool call)')
+                    break
+                    
+                tool_name = tool_call['tool']
+                tool_args = tool_call['args']
+                
+                # Yield tool call event
+                yield make_sse('tool_call', tool=tool_name, args=tool_args)
+                
+                tool_status = f"Running tool {tool_name}..." if language == 'en' else f"Đang chạy tool {tool_name}..."
+                if tool_name == 'READ_FILE':
+                    tool_status = f"Reading file: {tool_args.get('path')}..." if language == 'en' else f"Đang đọc file: {tool_args.get('path')}..."
+                elif tool_name == 'WRITE_FILE':
+                    tool_status = f"Writing file: {tool_args.get('path')}..." if language == 'en' else f"Đang ghi file: {tool_args.get('path')}..."
+                elif tool_name == 'RUN_COMMAND':
+                    tool_status = f"Running command: {tool_args.get('command')}..." if language == 'en' else f"Đang chạy lệnh: {tool_args.get('command')}..."
+                yield make_sse('agent_status', status=tool_status)
+                
+                if tool_name == 'FINISH':
+                    yield make_sse('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
+                    break
+                
+                # Execute tool
+                tool_result = execute_agent_tool(tool_name, tool_args, session.project_path)
+                
+                # Yield tool result event
+                # Keep output safe, limit size sent over SSE
+                display_result = tool_result
+                if len(display_result) > 5000:
+                    display_result = display_result[:5000] + "\n...[output truncated due to length]"
+                yield make_sse('tool_result', tool=tool_name, args=tool_args, result=display_result)
+                
+                post_status = f"Finished. AI is analyzing results..." if language == 'en' else f"Đã chạy xong tool. AI đang phân tích kết quả..."
+                if tool_name == 'READ_FILE':
+                    post_status = f"Read finished. AI is analyzing file..." if language == 'en' else f"Đã đọc file xong. AI đang phân tích..."
+                elif tool_name == 'WRITE_FILE':
+                    post_status = f"Write finished. AI is validating..." if language == 'en' else f"Đã ghi file xong. AI đang kiểm tra..."
+                elif tool_name == 'RUN_COMMAND':
+                    post_status = f"Command finished. AI is analyzing output..." if language == 'en' else f"Đã chạy lệnh xong. AI đang phân tích kết quả..."
+                yield make_sse('agent_status', status=post_status)
+                
+                # Append result to messages history for next turn
+                # Truncate content to save context and speed up Ollama prompt evaluation
+                model_tool_result = tool_result
+                if len(model_tool_result) > 8000:
+                    model_tool_result = model_tool_result[:8000] + "\n\n...[content truncated to save context]..."
+                
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool execution result for [{tool_name}]:\n{model_tool_result}\n\nPlease proceed to the next step."
+                })
+            
+            # Save final response summary to SQLite
+            final_summary = ""
+            for msg in messages[initial_messages_count:]:
+                if msg["role"] == "assistant":
+                    final_summary += msg["content"] + "\n\n"
+            
+            assistant_msg = ChatMessage(session_id=session_id, role='assistant', content=final_summary.strip())
             db.session.add(assistant_msg)
             db.session.commit()
             
-    return Response(generate(), mimetype='text/event-stream')
+            yield "data: [DONE]\n\n"
+            
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response

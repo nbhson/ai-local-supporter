@@ -51,7 +51,7 @@ async function switchTab(tab) {
     }
 
     // Auto initialize chat session if switching to chat and no session exists
-    if (tab === 'chat' && !state.chat.sessionId) {
+    if (tab === 'chat' && !state.chat.sessionId && !state.code.sessionId) {
         await initChatSession();
     }
 
@@ -65,8 +65,10 @@ function updateChatInput() {
         chatInputContainer.style.display = 'none';
         return;
     }
-    const s = tab === 'doc' ? state.doc : (tab === 'code' ? state.code : state.chat);
-    const hasSession = tab === 'chat' ? !!state.chat.sessionId : (tab === 'doc' ? !!state.doc.sessionId : !!state.code.sessionId);
+    const isDoc = tab === 'doc';
+    const isCodeActive = tab === 'chat' && !!state.code.sessionId;
+    const s = isDoc ? state.doc : (isCodeActive ? state.code : state.chat);
+    const hasSession = isDoc ? !!state.doc.sessionId : (isCodeActive ? !!state.code.sessionId : !!state.chat.sessionId);
     const t = translations[state.language];
 
     if (hasSession) {
@@ -74,11 +76,9 @@ function updateChatInput() {
         chatInput.disabled = false;
         sendBtn.disabled = false;
         if (tab === 'chat') {
-            chatInput.placeholder = t.chatPlaceholder;
+            chatInput.placeholder = isCodeActive ? t.codeChatPlaceholder : t.chatPlaceholder;
         } else {
-            chatInput.placeholder = tab === 'doc'
-                ? t.docChatPlaceholder
-                : t.codeChatPlaceholder;
+            chatInput.placeholder = t.docChatPlaceholder;
         }
         chatInput.focus();
     } else {
@@ -140,14 +140,16 @@ function setupEventListeners() {
 
     // Clear sessions
     clearSessionBtn.addEventListener('click', clearDocSession);
-    clearCodeSessionBtn.addEventListener('click', clearCodeSession);
+    if (clearCodeSessionBtn) clearCodeSessionBtn.addEventListener('click', clearCodeSession);
     clearChatSessionBtn.addEventListener('click', clearChatSession);
 
     // Code analyze
-    analyzeCodeBtn.addEventListener('click', analyzeCode);
-    codeInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.ctrlKey) analyzeCode();
-    });
+    if (analyzeCodeBtn) analyzeCodeBtn.addEventListener('click', analyzeCode);
+    if (codeInput) {
+        codeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.ctrlKey) analyzeCode();
+        });
+    }
 
     // Quick actions - doc
     document.querySelectorAll('#tab-doc .quick-btn').forEach(btn => {
@@ -158,7 +160,7 @@ function setupEventListeners() {
     });
 
     // Quick actions - code
-    document.querySelectorAll('#tab-code .quick-btn').forEach(btn => {
+    document.querySelectorAll('#codeQuickActions .quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             chatInput.value = btn.dataset.codeQuestion;
             sendMessage();
@@ -166,7 +168,7 @@ function setupEventListeners() {
     });
 
     // Quick actions - chat
-    document.querySelectorAll('#tab-chat .quick-btn').forEach(btn => {
+    document.querySelectorAll('#chatQuickActions .quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             chatInput.value = btn.dataset.chatQuestion;
             sendMessage();
@@ -181,9 +183,8 @@ async function sendMessage() {
 
     const tab = state.activeTab;
     const isDoc = tab === 'doc';
-    const isCode = tab === 'code';
-    const isChat = tab === 'chat';
-    const s = isDoc ? state.doc : (isCode ? state.code : state.chat);
+    const isCodeActive = tab === 'chat' && !!state.code.sessionId;
+    const s = isDoc ? state.doc : (isCodeActive ? state.code : state.chat);
 
     if (s.isProcessing || !s.sessionId) return;
     s.isProcessing = true;
@@ -191,8 +192,8 @@ async function sendMessage() {
     chatInput.disabled = true;
     sendBtn.disabled = true;
 
-    const targetMessages = isDoc ? docChatMessages : (isCode ? codeChatMessages : chatChatMessages);
-    const addMsg = isDoc ? addDocMessage : (isCode ? addCodeMessage : addChatMessage);
+    const targetMessages = isDoc ? docChatMessages : chatChatMessages;
+    const addMsg = isDoc ? addDocMessage : addChatMessage;
 
     addMsg('user', question);
     chatInput.value = '';
@@ -200,7 +201,7 @@ async function sendMessage() {
     showTypingIndicator(targetMessages);
 
     try {
-        const endpoint = isDoc ? '/api/doc/chat' : (isCode ? '/api/code/chat' : '/api/chat/chat');
+        const endpoint = isDoc ? '/api/doc/chat' : (isCodeActive ? '/api/chat/code/chat' : '/api/chat/chat');
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -321,28 +322,33 @@ function updateUILanguage() {
     const t = translations[lang];
 
     // Update upload area
-    document.querySelector('.upload-text').textContent = t.uploadText;
-    document.querySelector('.upload-subtext').textContent = t.uploadSubtext;
-    document.querySelector('.upload-formats').textContent = t.uploadFormats;
+    if (document.querySelector('.upload-text')) document.querySelector('.upload-text').textContent = t.uploadText;
+    if (document.querySelector('.upload-subtext')) document.querySelector('.upload-subtext').textContent = t.uploadSubtext;
+    if (document.querySelector('.upload-formats')) document.querySelector('.upload-formats').textContent = t.uploadFormats;
 
     // Update tab labels
-    document.querySelector('[data-tab="doc"] .tab-label').textContent = t.docTab;
-    document.querySelector('[data-tab="code"] .tab-label').textContent = t.codeTab;
-    document.querySelector('[data-tab="chat"] .tab-label').textContent = t.chatTab;
+    const docTabBtn = document.querySelector('[data-tab="doc"] .tab-label');
+    if (docTabBtn) docTabBtn.textContent = t.docTab;
+    const chatTabBtn = document.querySelector('[data-tab="chat"] .tab-label');
+    if (chatTabBtn) chatTabBtn.textContent = t.chatTab;
     const projectTabBtn = document.querySelector('[data-tab="project"] .tab-label');
     if (projectTabBtn) projectTabBtn.textContent = t.projectTab;
 
     // Update code section
-    document.querySelector('.code-textarea').placeholder = t.pasteCode;
-    analyzeCodeBtn.innerHTML = `<span class="material-symbols-rounded btn-icon-left">analytics</span> ${t.analyzeCode}`;
+    const codeTextarea = document.querySelector('.code-textarea');
+    if (codeTextarea) codeTextarea.placeholder = t.pasteCode;
+    if (analyzeCodeBtn) analyzeCodeBtn.innerHTML = `<span class="material-symbols-rounded btn-icon-left">analytics</span> ${t.analyzeCode}`;
 
     // Update welcome screens
-    document.querySelector('#docWelcome h2').textContent = t.welcomeDoc;
-    document.querySelector('#docWelcome p').textContent = t.welcomeDocDesc;
-    document.querySelector('#codeWelcome h2').textContent = t.welcomeCode;
-    document.querySelector('#codeWelcome p').textContent = t.welcomeCodeDesc;
-    document.querySelector('#chatWelcome h2').textContent = t.welcomeChat;
-    document.querySelector('#chatWelcome p').textContent = t.welcomeChatDesc;
+    const docWelcomeH2 = document.querySelector('#docWelcome h2');
+    const docWelcomeP = document.querySelector('#docWelcome p');
+    if (docWelcomeH2) docWelcomeH2.textContent = t.welcomeDoc;
+    if (docWelcomeP) docWelcomeP.textContent = t.welcomeDocDesc;
+
+    const chatWelcomeH2 = document.querySelector('#chatWelcome h2');
+    const chatWelcomeP = document.querySelector('#chatWelcome p');
+    if (chatWelcomeH2) chatWelcomeH2.textContent = t.welcomeChat;
+    if (chatWelcomeP) chatWelcomeP.textContent = t.welcomeChatDesc;
 
     const projWelcomeH2 = document.querySelector('#projectWelcome h2');
     const projWelcomeP = document.querySelector('#projectWelcome p');
@@ -444,6 +450,34 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+if (typeof marked !== 'undefined') {
+    marked.use({
+        breaks: true,
+        gfm: true,
+        renderer: {
+            code(code, language) {
+                const lang = (language || '').match(/\S*/)?.[0] || 'code';
+                const escapedCode = code
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+                
+                return `<div class="code-block-wrapper">
+                    <div class="code-header">
+                        <span>${lang}</span>
+                        <button class="copy-code-btn" onclick="copyCodeToClipboard(this)" data-code="${escapedCode}" title="Copy Code">
+                            <span class="material-symbols-rounded">content_copy</span>
+                        </button>
+                    </div>
+                    <pre><code class="language-${lang}">${escapedCode}</code></pre>
+                </div>`;
+            }
+        }
+    });
+}
+
 function formatMessage(text) {
     if (!text) return "";
 
@@ -455,7 +489,13 @@ function formatMessage(text) {
         formatted = formatted.replace(/<think>([\s\S]*)/, '<div class="thought-process"><div class="thought-header"><span class="material-symbols-rounded spinning">progress_activity</span> Thinking...</div><div class="thought-content">$1</div></div>');
     }
 
-    // Handle code blocks with copy-code button
+    formatted = fixNestedMarkdown(formatted);
+
+    if (typeof marked !== 'undefined') {
+        return marked.parse(formatted);
+    }
+
+    // Fallback if marked is not available
     formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
         const escapedCode = code
             .replace(/&/g, '&amp;')
@@ -479,6 +519,56 @@ function formatMessage(text) {
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
         .replace(/\n/g, '<br>');
+}
+
+function fixNestedMarkdown(text) {
+    if (!text.includes('```markdown') && !text.includes('```md')) return text;
+
+    const lines = text.split('\n');
+    let out = [];
+    let inMd = false;
+    let innerDepth = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        let trimmed = line.trim();
+        
+        if (!inMd) {
+            if (trimmed.startsWith('```markdown') || trimmed.startsWith('```md')) {
+                inMd = true;
+                innerDepth = 0;
+                out.push(line.replace(/^```/, '`````'));
+            } else {
+                out.push(line);
+            }
+            continue;
+        }
+        
+        // Inside markdown block
+        if (trimmed.startsWith('```') && !trimmed.startsWith('`````')) {
+            if (trimmed.match(/^```[a-zA-Z0-9_+-]+$/)) {
+                // Opening inner block with language
+                innerDepth++;
+                out.push(line);
+            } else if (trimmed === '```') {
+                if (innerDepth > 0) {
+                    innerDepth--;
+                    out.push(line);
+                } else {
+                    // Close outer markdown block
+                    inMd = false;
+                    out.push(line.replace(/^```/, '`````'));
+                }
+            } else {
+                out.push(line);
+            }
+        } else {
+            out.push(line);
+        }
+    }
+    
+    // If stream ends while still in md block, it's fine, marked.js handles unclosed 5-backtick blocks
+    return out.join('\n');
 }
 
 // Global copy to clipboard function

@@ -11,6 +11,7 @@ const state = {
         isLocal: false,
         tree: null,
         stats: null,
+        flatFiles: [],
         openFiles: {}, // { relPath: content }
         activeFile: null,
         selectedFiles: new Set(),
@@ -43,8 +44,6 @@ const codeFileName = $('codeFileName');
 const codeStatus = $('codeStatus');
 const clearCodeSessionBtn = $('clearCodeSessionBtn');
 const codeQuickActions = $('codeQuickActions');
-const codeWelcome = $('codeWelcome');
-const codeChatMessages = $('codeChatMessages');
 const chatInputContainer = $('chatInputContainer');
 const chatInput = $('chatInput');
 const sendBtn = $('sendBtn');

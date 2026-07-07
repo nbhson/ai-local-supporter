@@ -20,3 +20,7 @@ chroma_db/
 instance/
 *.db
 .DS_Store
+
+# Aider
+.aider*
+

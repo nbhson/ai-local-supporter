@@ -150,3 +150,43 @@ Lưu trữ lịch sử hội thoại của cả phần Phân tích Tài liệu v
 *   `role` (String): Vai trò gửi tin nhắn (`system`, `user`, `assistant`).
 *   `content` (Text): Nội dung tin nhắn.
 *   `created_at` (DateTime): Thời gian gửi tin nhắn.
+
+---
+
+## 🤖 Kiến trúc AI Coding Agent (ReAct Engine)
+
+Trong Tab **Dự án (Project Workspace)**, hệ thống áp dụng mô hình **ReAct (Reasoning and Action)** cho phép AI hoạt động như một Kỹ sư phần mềm thực thụ. Thay vì yêu cầu người dùng tự chọn file và đính kèm context thủ công, Agent sẽ tự động lập kế hoạch và thực thi qua các công cụ (tools) được tích hợp trực tiếp.
+
+### Luồng Hoạt Động (Agent Execution Loop)
+
+```mermaid
+sequenceDiagram
+    participant User as Web UI (Browser)
+    participant Flask as Flask Server (Agent Engine)
+    participant Ollama as Ollama Local (LLM)
+    
+    User->>Flask: Nhập yêu cầu chỉnh sửa dự án
+    Flask->>Flask: Quét cấu trúc cây thư mục của dự án
+    
+    loop Agent ReAct Loop (Tối đa 10 lượt)
+        Flask->>Ollama: Gửi Prompt hệ thống + Cấu trúc thư mục + Lịch sử + Yêu cầu
+        Ollama-->>Flask: Sinh suy nghĩ (Thought) + Gọi Tool (Ví dụ: [READ_FILE: src/main.py])
+        Flask-->>User: Stream Thought & Tool Call qua SSE
+        Flask->>Flask: Thực thi Tool cục bộ (Đọc file/Ghi file/Chạy lệnh)
+        Flask-->>User: Stream Kết quả chạy Tool (Tool Result)
+        Flask->>Flask: Lưu kết quả Tool vào lịch sử hội thoại của lượt tiếp theo
+    end
+    
+    Flask->>Ollama: Prompt cuối cùng để kết luận
+    Ollama-->>Flask: Trả về giải thích tổng hợp
+    Flask-->>User: Stream câu trả lời cuối cùng & [DONE]
+```
+
+### Các Công Cụ (Tools) Của Agent:
+1.  **READ_FILE (`[READ_FILE: <path>]`):** Đọc nội dung tập tin chỉ định.
+2.  **WRITE_FILE (`[WRITE_FILE: <path>]`):** Ghi đè hoặc tạo mới tập tin với nội dung tương ứng.
+3.  **LIST_DIR (`[LIST_DIR: <path>]`):** Liệt kê thư mục hiện tại hoặc thư mục con.
+4.  **SEARCH_FILES (`[SEARCH_FILES: <query>]`):** Tìm kiếm chuỗi/regex trong tên file hoặc nội dung file.
+5.  **RUN_COMMAND (`[RUN_COMMAND: <command>]`):** Thực thi câu lệnh shell (như chạy unittest, lint, git diff) trong thư mục dự án và lấy ra stdout/stderr.
+6.  **FINISH (`[FINISH]`):** Dừng vòng lặp và kết luận.
+

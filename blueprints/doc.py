@@ -187,8 +187,9 @@ Context from document:
         messages = [{"role": "system", "content": system_prompt}]
         
         chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
-        # skip first greeting message in the system prompt context as it's just a welcome message
-        for msg in chat_history[1:-10] if len(chat_history) > 10 else chat_history[1:]:
+        # skip first greeting message and only keep last 10 messages
+        recent_history = [msg for msg in chat_history[-10:] if chat_history and msg.id != chat_history[0].id]
+        for msg in recent_history:
             messages.append({"role": msg.role, "content": msg.content})
             
         messages.append({
@@ -210,8 +211,9 @@ Context from document:
         messages = [{"role": "system", "content": system_prompt}]
         
         chat_history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
-        # skip first greeting message in the system prompt context as it's just a welcome message
-        for msg in chat_history[1:-10] if len(chat_history) > 10 else chat_history[1:]:
+        # skip first greeting message and only keep last 10 messages
+        recent_history = [msg for msg in chat_history[-10:] if chat_history and msg.id != chat_history[0].id]
+        for msg in recent_history:
             messages.append({"role": msg.role, "content": msg.content})
             
         messages.append({"role": "user", "content": question})

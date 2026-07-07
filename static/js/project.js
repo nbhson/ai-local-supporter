@@ -79,6 +79,8 @@ function initProjectWorkspace() {
             }
         }
     });
+    initAutocompleteDropdown();
+    initResizers();
 }
 
 async function openLocalProject() {
@@ -113,6 +115,7 @@ async function openLocalProject() {
         state.project.openFiles = {};
         state.project.activeFile = null;
         state.project.selectedFiles.clear();
+        updateFlatFilesList();
 
         // UI toggles
         document.querySelector('.project-sidebar-section').style.display = 'none';
@@ -124,6 +127,7 @@ async function openLocalProject() {
         renderProjectTree(data.tree, projectTreeContainer);
         renderProjectDashboard(data.stats, path);
         updateContextBar();
+        showChatWelcomeMessage();
 
         showToast('✅', state.language === 'vi' ? 'Đã mở dự án thành công!' : 'Project opened successfully!');
     } catch (err) {
@@ -211,22 +215,6 @@ function renderProjectTree(nodes, container, depth = 0) {
             renderProjectTree(node.children || [], childrenContainer, depth + 1);
             li.appendChild(childrenContainer);
         } else {
-            // Checkbox for multi-file context selection
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'tree-checkbox';
-            checkbox.checked = state.project.selectedFiles.has(node.path);
-
-            checkbox.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (checkbox.checked) {
-                    state.project.selectedFiles.add(node.path);
-                } else {
-                    state.project.selectedFiles.delete(node.path);
-                }
-                updateContextBar();
-            });
-
             const icon = document.createElement('span');
             icon.className = 'material-symbols-rounded tree-icon file';
             const ext = node.name.split('.').pop().toLowerCase();
@@ -248,9 +236,42 @@ function renderProjectTree(nodes, container, depth = 0) {
             const name = document.createElement('span');
             name.textContent = node.name;
 
-            itemDiv.appendChild(checkbox);
+            const actionsDiv = document.createElement('div');
+            actionsDiv.className = 'tree-file-actions';
+
+            const addContextBtn = document.createElement('span');
+            addContextBtn.className = 'material-symbols-rounded tree-file-action add-context-btn';
+            const isSelected = state.project.selectedFiles.has(node.path);
+            addContextBtn.textContent = isSelected ? 'check' : 'add';
+            addContextBtn.title = isSelected ? (state.language === 'vi' ? 'Xoá khỏi context chat' : 'Remove from chat context') : (state.language === 'vi' ? 'Thêm vào context chat' : 'Add to chat context');
+            
+            if (isSelected) {
+                itemDiv.classList.add('in-context');
+            }
+
+            addContextBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const activeSelected = state.project.selectedFiles.has(node.path);
+                if (activeSelected) {
+                    state.project.selectedFiles.delete(node.path);
+                    const regex = new RegExp(`@${node.path}\\s*`, 'g');
+                    projectChatInput.value = projectChatInput.value.replace(regex, '');
+                } else {
+                    state.project.selectedFiles.add(node.path);
+                    const val = projectChatInput.value.trim();
+                    projectChatInput.value = val ? `${val} @${node.path} ` : `@${node.path} `;
+                    projectChatInput.dispatchEvent(new Event('input'));
+                }
+                updateContextBar();
+                updateTreeItemTags();
+                projectChatInput.focus();
+            });
+
+            actionsDiv.appendChild(addContextBtn);
+
             itemDiv.appendChild(icon);
             itemDiv.appendChild(name);
+            itemDiv.appendChild(actionsDiv);
             li.appendChild(itemDiv);
 
             itemDiv.addEventListener('click', (e) => {
@@ -365,25 +386,73 @@ function renderProjectDashboard(stats, path) {
 
 function updateContextBar() {
     const count = state.project.selectedFiles.size;
-    workspaceContextCount.textContent = count === 1 ? '1 file context' : `${count} files context`;
+    
+    if (count > 0) {
+        workspaceContextBar.style.display = 'flex';
+        workspaceContextCount.textContent = count === 1 ? '1 file context' : `${count} files context`;
+    } else {
+        workspaceContextBar.style.display = 'none';
+        workspaceContextCount.textContent = '0 file context';
+    }
 
     contextFilesTags.innerHTML = '';
     state.project.selectedFiles.forEach(path => {
+        const filename = path.split('/').pop();
+        const ext = filename.split('.').pop().toLowerCase();
+        
+        let iconName = 'draft';
+        let iconClass = 'file-generic';
+        
+        if (['py', 'js', 'ts', 'go', 'rs', 'cpp', 'c', 'sh', 'bat'].includes(ext)) {
+            iconName = 'code';
+            iconClass = 'file-code';
+        } else if (['json', 'yaml', 'yml', 'xml', 'toml'].includes(ext)) {
+            iconName = 'settings';
+            iconClass = 'file-config';
+        } else if (['md', 'txt', 'rtf'].includes(ext)) {
+            iconName = 'description';
+            iconClass = 'file-doc';
+        } else if (['png', 'jpg', 'jpeg', 'svg', 'gif'].includes(ext)) {
+            iconName = 'image';
+            iconClass = 'file-image';
+        }
+
         const tag = document.createElement('div');
         tag.className = 'context-tag';
         tag.innerHTML = `
-            <span>${path.split('/').pop()}</span>
+            <span class="material-symbols-rounded context-tag-icon ${iconClass}" style="font-size: 0.95rem !important;">${iconName}</span>
+            <span class="context-tag-name" title="${path}">${filename}</span>
             <span class="material-symbols-rounded context-tag-remove">close</span>
         `;
         tag.querySelector('.context-tag-remove').addEventListener('click', () => {
             state.project.selectedFiles.delete(path);
-            // Sync tree checkbox if visible
-            const treeItemCheckbox = projectTreeContainer.querySelector(`.tree-item[data-path="${path}"] .tree-checkbox`);
-            if (treeItemCheckbox) treeItemCheckbox.checked = false;
+            const regex = new RegExp(`@${path}\\s*`, 'g');
+            projectChatInput.value = projectChatInput.value.replace(regex, '');
             updateContextBar();
+            updateTreeItemTags();
         });
         contextFilesTags.appendChild(tag);
     });
+
+    if (count > 1) {
+        const clearBtn = document.createElement('div');
+        clearBtn.className = 'context-clear-all';
+        clearBtn.innerHTML = `
+            <span>Clear all</span>
+            <span class="material-symbols-rounded" style="font-size: 0.85rem !important;">delete</span>
+        `;
+        clearBtn.addEventListener('click', () => {
+            state.project.selectedFiles.forEach(path => {
+                const regex = new RegExp(`@${path}\\s*`, 'g');
+                projectChatInput.value = projectChatInput.value.replace(regex, '');
+            });
+            state.project.selectedFiles.clear();
+            updateContextBar();
+            updateTreeItemTags();
+            projectChatInput.dispatchEvent(new Event('input'));
+        });
+        contextFilesTags.appendChild(clearBtn);
+    }
 }
 
 function loadMonaco(callback) {
@@ -871,6 +940,7 @@ async function reloadProjectWorkspace() {
         if (res.ok) {
             state.project.tree = data.tree;
             state.project.stats = data.stats;
+            updateFlatFilesList();
             renderProjectTree(data.tree, projectTreeContainer);
             renderProjectDashboard(data.stats, state.project.path);
         }
@@ -880,6 +950,9 @@ async function reloadProjectWorkspace() {
 }
 
 function addProjectChatMessage(role, content) {
+    if (projectChatMessages.querySelector('.chat-welcome-container')) {
+        projectChatMessages.innerHTML = '';
+    }
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
     msgDiv.innerHTML = `
@@ -891,6 +964,150 @@ function addProjectChatMessage(role, content) {
 }
 
 // Send streaming message for Project Workspace Chat
+function cleanToolCallsFromText(text) {
+    return text.replace(/\[(?:READ_FILE|WRITE_FILE|LIST_DIR|SEARCH_FILES|RUN_COMMAND|FINISH)[^\]]*?\]/g, '').trim();
+}
+
+function updateAgentStatus(bubble, statusText) {
+    let statusLabel = bubble.querySelector('.agent-status-label');
+    if (!statusLabel) {
+        statusLabel = document.createElement('div');
+        statusLabel.className = 'agent-status-label';
+        bubble.appendChild(statusLabel);
+    }
+    statusLabel.innerHTML = `<span class="material-symbols-rounded spinning" style="font-size: 0.9rem !important;">progress_activity</span> <span>${statusText}</span>`;
+    
+    if (statusText.toLowerCase().includes('hoàn thành') || statusText.toLowerCase().includes('finished') || statusText.toLowerCase().includes('thành công') || statusText.toLowerCase().includes('successfully')) {
+        statusLabel.innerHTML = `<span class="material-symbols-rounded" style="font-size: 0.9rem !important; color: var(--success);">check_circle</span> <span>${statusText}</span>`;
+    }
+}
+
+function updateAgentText(bubble, fullText) {
+    let textDiv = bubble.querySelector('.agent-thought-area');
+    if (!textDiv) {
+        textDiv = document.createElement('div');
+        textDiv.className = 'agent-thought-area';
+        bubble.insertBefore(textDiv, bubble.firstChild);
+    }
+    textDiv.innerHTML = formatProjectMessage(cleanToolCallsFromText(fullText));
+}
+
+function addAgentTimelineStep(bubble, toolName, args) {
+    let timeline = bubble.querySelector('.agent-timeline');
+    if (!timeline) {
+        timeline = document.createElement('div');
+        timeline.className = 'agent-timeline';
+        // Place timeline right after thoughts
+        const statusLabel = bubble.querySelector('.agent-status-label');
+        if (statusLabel) {
+            bubble.insertBefore(timeline, statusLabel);
+        } else {
+            bubble.appendChild(timeline);
+        }
+    }
+    
+    const stepId = 'step_' + Math.random().toString(36).substring(2, 9);
+    const stepDiv = document.createElement('div');
+    stepDiv.className = 'agent-step running';
+    stepDiv.id = stepId;
+    
+    let icon = 'progress_activity';
+    let titleText = '';
+    
+    if (toolName === 'READ_FILE') {
+        icon = 'book';
+        titleText = state.language === 'vi' ? `Đọc file: ${args.path}` : `Read file: ${args.path}`;
+    } else if (toolName === 'WRITE_FILE') {
+        icon = 'edit';
+        titleText = state.language === 'vi' ? `Ghi file: ${args.path}` : `Write file: ${args.path}`;
+    } else if (toolName === 'LIST_DIR') {
+        icon = 'folder_open';
+        titleText = state.language === 'vi' ? `Duyệt thư mục: ${args.path || '.'}` : `List folder: ${args.path || '.'}`;
+    } else if (toolName === 'SEARCH_FILES') {
+        icon = 'search';
+        titleText = state.language === 'vi' ? `Tìm kiếm: "${args.query}"` : `Search: "${args.query}"`;
+    } else if (toolName === 'RUN_COMMAND') {
+        icon = 'terminal';
+        titleText = state.language === 'vi' ? `Chạy lệnh: ${args.command}` : `Run command: ${args.command}`;
+    } else if (toolName === 'FINISH') {
+        icon = 'check_circle';
+        titleText = state.language === 'vi' ? `Hoàn thành tác vụ` : `Finished task`;
+    }
+    
+    stepDiv.innerHTML = `
+        <div class="agent-step-header">
+            <span class="material-symbols-rounded step-icon spinning">${icon}</span>
+            <span class="step-title">${titleText}</span>
+            <span class="material-symbols-rounded step-toggle" style="display:none;">keyboard_arrow_down</span>
+        </div>
+        <div class="agent-step-body" style="display:none;"></div>
+    `;
+    
+    timeline.appendChild(stepDiv);
+    projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
+    return stepId;
+}
+
+async function updateAgentTimelineStep(stepId, status, result, toolName, args) {
+    const stepDiv = document.getElementById(stepId);
+    if (!stepDiv) return;
+    
+    stepDiv.classList.remove('running');
+    stepDiv.classList.add(status);
+    
+    const iconSpan = stepDiv.querySelector('.step-icon');
+    iconSpan.classList.remove('spinning');
+    
+    if (status === 'success') {
+        iconSpan.textContent = toolName === 'WRITE_FILE' ? 'edit_square' : 'check_circle';
+        iconSpan.style.color = 'var(--success)';
+    } else {
+        iconSpan.textContent = 'error';
+        iconSpan.style.color = 'var(--error)';
+    }
+    
+    const toggleIcon = stepDiv.querySelector('.step-toggle');
+    const bodyDiv = stepDiv.querySelector('.agent-step-body');
+    
+    if (result) {
+        toggleIcon.style.display = 'block';
+        
+        // Clean result for printing
+        const escapedResult = result.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        bodyDiv.innerHTML = `<pre><code>${escapedResult}</code></pre>`;
+        
+        const header = stepDiv.querySelector('.agent-step-header');
+        header.addEventListener('click', () => {
+            const isCollapsed = bodyDiv.style.display === 'none';
+            bodyDiv.style.display = isCollapsed ? 'block' : 'none';
+            toggleIcon.textContent = isCollapsed ? 'keyboard_arrow_up' : 'keyboard_arrow_down';
+        });
+    }
+    
+    // Auto-reload workspace if WRITE_FILE succeeded
+    if (toolName === 'WRITE_FILE' && status === 'success') {
+        await reloadProjectWorkspace();
+        const path = args.path;
+        if (path) {
+            if (state.project.openFiles[path] !== undefined) {
+                try {
+                    const res = await fetch(`/api/project/${state.project.sessionId}/file?path=${encodeURIComponent(path)}`);
+                    const data = await res.json();
+                    if (res.ok) {
+                        state.project.openFiles[path] = data.content;
+                        if (state.project.activeFile === path && monacoEditor) {
+                            monacoEditor.setValue(data.content);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error reloading file content:", e);
+                }
+            }
+        }
+    }
+    projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
+}
+
 async function sendProjectMessage() {
     const question = projectChatInput.value.trim();
     if (!question || state.project.isProcessing || !state.project.sessionId) return;
@@ -911,10 +1128,9 @@ async function sendProjectMessage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 question: question,
-                active_file: state.project.activeFile || '',
-                selected_files: Array.from(state.project.selectedFiles),
                 model: modelSelect.value,
-                language: state.language
+                language: state.language,
+                context_files: Array.from(state.project.selectedFiles)
             })
         });
 
@@ -934,33 +1150,47 @@ async function sendProjectMessage() {
         projectChatMessages.appendChild(msgDiv);
         const bubble = msgDiv.querySelector('.message-bubble');
 
-        // custom stream reader that formats with project message rules
         const reader = res.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let fullText = "";
+        let currentStepId = null;
+        let buffer = "";
 
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
 
             const wasAtBottom = projectChatMessages.scrollHeight - projectChatMessages.scrollTop - projectChatMessages.clientHeight < 150;
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
 
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6).trim();
+                const trimmedLine = line.trim();
+                if (!trimmedLine) continue;
+                
+                if (trimmedLine.startsWith('data: ')) {
+                    const dataStr = trimmedLine.slice(6).trim();
                     if (dataStr === '[DONE]') break;
 
                     try {
                         const data = JSON.parse(dataStr);
-                        if (data.content) {
+                        if (data.type === 'agent_status') {
+                            updateAgentStatus(bubble, data.status);
+                        } else if (data.type === 'content') {
                             fullText += data.content;
-                            bubble.innerHTML = formatProjectMessage(fullText);
+                            updateAgentText(bubble, fullText);
+                        } else if (data.type === 'tool_call') {
+                            currentStepId = addAgentTimelineStep(bubble, data.tool, data.args);
+                        } else if (data.type === 'tool_result') {
+                            const status = data.result.startsWith('Error') ? 'error' : 'success';
+                            await updateAgentTimelineStep(currentStepId, status, data.result, data.tool, data.args);
                         } else if (data.error) {
-                            bubble.innerHTML = formatProjectMessage(`❌ **Lỗi:** ${data.error}`);
+                            updateAgentText(bubble, `❌ **Lỗi:** ${data.error}`);
                         }
-                    } catch (e) { }
+                    } catch (e) {
+                        console.warn("Failed to parse JSON chunk:", dataStr, e);
+                    }
                 }
             }
 
@@ -969,7 +1199,6 @@ async function sendProjectMessage() {
             }
         }
 
-        bubble.innerHTML = formatProjectMessage(fullText);
         projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
     } catch (err) {
         removeTypingIndicator();
@@ -986,5 +1215,373 @@ async function sendProjectMessage() {
         projectChatInput.disabled = false;
         projectSendBtn.disabled = false;
         projectChatInput.focus();
+    }
+}
+
+// Flat file list helpers, autocomplete and text syncing logic
+function updateTreeItemTags() {
+    const fileItems = projectTreeContainer.querySelectorAll('.tree-item[data-path]');
+    fileItems.forEach(itemDiv => {
+        const path = itemDiv.getAttribute('data-path');
+        const addBtn = itemDiv.querySelector('.add-context-btn');
+        if (addBtn) {
+            const isSelected = state.project.selectedFiles.has(path);
+            if (isSelected) {
+                itemDiv.classList.add('in-context');
+                addBtn.textContent = 'check';
+                addBtn.title = state.language === 'vi' ? 'Xoá khỏi context chat' : 'Remove from chat context';
+            } else {
+                itemDiv.classList.remove('in-context');
+                addBtn.textContent = 'add';
+                addBtn.title = state.language === 'vi' ? 'Thêm vào context chat' : 'Add to chat context';
+            }
+        }
+    });
+}
+
+function updateFlatFilesList() {
+    if (!state.project.tree) {
+        state.project.flatFiles = [];
+        return;
+    }
+    const files = [];
+    function traverse(nodes) {
+        for (const node of nodes) {
+            if (node.is_dir) {
+                traverse(node.children || []);
+            } else {
+                files.push(node);
+            }
+        }
+    }
+    traverse(state.project.tree);
+    state.project.flatFiles = files;
+}
+
+function showChatWelcomeMessage() {
+    projectChatMessages.innerHTML = `
+        <div class="chat-welcome-container">
+            <div class="chat-welcome-icon">
+                <span class="material-symbols-rounded">chat_spark</span>
+            </div>
+            <h4>AI Workspace Assistant</h4>
+            <p>${state.language === 'vi' ? 'Hỏi bất kỳ điều gì về dự án này hoặc yêu cầu viết code. Sử dụng @ để đính kèm file làm ngữ cảnh.' : 'Ask anything about this project or request code changes. Use @ to attach files to context.'}</p>
+            <div class="chat-welcome-suggestions">
+                <div class="suggestion-chip" data-text="Giải thích cấu trúc dự án này">
+                    <span>${state.language === 'vi' ? 'Giải thích cấu trúc dự án này' : 'Explain this project structure'}</span>
+                    <span class="material-symbols-rounded" style="font-size: 0.95rem; color: var(--primary-color);">north_east</span>
+                </div>
+                <div class="suggestion-chip" data-text="Tìm các file cấu hình và giải thích">
+                    <span>${state.language === 'vi' ? 'Tìm các file cấu hình và giải thích' : 'Find configuration files'}</span>
+                    <span class="material-symbols-rounded" style="font-size: 0.95rem; color: var(--primary-color);">north_east</span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    projectChatMessages.querySelectorAll('.suggestion-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            projectChatInput.value = chip.dataset.text;
+            projectChatInput.focus();
+            projectChatInput.dispatchEvent(new Event('input'));
+        });
+    });
+}
+
+let activeAutocompleteIndex = -1;
+let autocompleteFilteredFiles = [];
+
+function initAutocompleteDropdown() {
+    const dropdown = document.createElement('div');
+    dropdown.id = 'projectAutocompleteDropdown';
+    dropdown.className = 'autocomplete-dropdown';
+    
+    const container = document.querySelector('.project-chat-input-container');
+    if (container) {
+        container.appendChild(dropdown);
+    }
+    
+    projectChatInput.addEventListener('input', handleChatInputEvent);
+    projectChatInput.addEventListener('keydown', handleChatInputKeydown, true);
+    
+    document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target) && e.target !== projectChatInput) {
+            hideAutocompleteDropdown();
+        }
+    });
+}
+
+function handleChatInputEvent(e) {
+    projectChatInput.style.height = 'auto';
+    projectChatInput.style.height = (projectChatInput.scrollHeight) + 'px';
+    
+    syncSelectedFilesFromInput();
+    
+    const text = projectChatInput.value;
+    const cursor = projectChatInput.selectionStart;
+    const lastAtIdx = text.lastIndexOf('@', cursor - 1);
+    
+    if (lastAtIdx !== -1) {
+        const textBetween = text.substring(lastAtIdx + 1, cursor);
+        if (!/\s/.test(textBetween)) {
+            showAutocompleteDropdown(textBetween, lastAtIdx);
+            return;
+        }
+    }
+    
+    hideAutocompleteDropdown();
+}
+
+function syncSelectedFilesFromInput() {
+    if (!state.project.flatFiles) return;
+    
+    const text = projectChatInput.value;
+    const matches = text.match(/@[^\s]+/g) || [];
+    
+    const mentionedPaths = new Set();
+    for (let match of matches) {
+        const path = match.slice(1);
+        const matchedFile = state.project.flatFiles.find(f => f.path === path) || 
+                            (state.project.flatFiles.filter(f => f.name === path).length === 1 ? state.project.flatFiles.find(f => f.name === path) : null);
+        if (matchedFile) {
+            mentionedPaths.add(matchedFile.path);
+        }
+    }
+    
+    let changed = false;
+    state.project.selectedFiles.forEach(path => {
+        if (!mentionedPaths.has(path)) {
+            state.project.selectedFiles.delete(path);
+            changed = true;
+        }
+    });
+    
+    mentionedPaths.forEach(path => {
+        if (!state.project.selectedFiles.has(path)) {
+            state.project.selectedFiles.add(path);
+            changed = true;
+        }
+    });
+    
+    if (changed) {
+        updateContextBar();
+        updateTreeItemTags();
+    }
+}
+
+function showAutocompleteDropdown(query, atIndex) {
+    const dropdown = $('projectAutocompleteDropdown');
+    if (!dropdown || !state.project.flatFiles) return;
+    
+    const lowerQuery = query.toLowerCase();
+    autocompleteFilteredFiles = state.project.flatFiles.filter(file => 
+        file.name.toLowerCase().includes(lowerQuery) || 
+        file.path.toLowerCase().includes(lowerQuery)
+    ).slice(0, 10);
+    
+    if (autocompleteFilteredFiles.length === 0) {
+        hideAutocompleteDropdown();
+        return;
+    }
+    
+    dropdown.innerHTML = '';
+    activeAutocompleteIndex = 0;
+    
+    autocompleteFilteredFiles.forEach((file, index) => {
+        const item = document.createElement('div');
+        item.className = `autocomplete-item${index === 0 ? ' active' : ''}`;
+        
+        const ext = file.name.split('.').pop().toLowerCase();
+        let iconName = 'draft';
+        let iconClass = 'file-generic';
+        
+        if (['py', 'js', 'ts', 'go', 'rs', 'cpp', 'c', 'sh', 'bat'].includes(ext)) {
+            iconName = 'code';
+            iconClass = 'file-code';
+        } else if (['json', 'yaml', 'yml', 'xml', 'toml'].includes(ext)) {
+            iconName = 'settings';
+            iconClass = 'file-config';
+        } else if (['md', 'txt', 'rtf'].includes(ext)) {
+            iconName = 'description';
+            iconClass = 'file-doc';
+        } else if (['png', 'jpg', 'jpeg', 'svg', 'gif'].includes(ext)) {
+            iconName = 'image';
+            iconClass = 'file-image';
+        }
+        
+        item.innerHTML = `
+            <span class="material-symbols-rounded autocomplete-item-icon ${iconClass}">${iconName}</span>
+            <div class="autocomplete-item-info">
+                <span class="autocomplete-item-name">${file.name}</span>
+                <span class="autocomplete-item-path">${file.path}</span>
+            </div>
+        `;
+        
+        item.addEventListener('click', () => {
+            selectAutocompleteItem(file, atIndex);
+        });
+        
+        dropdown.appendChild(item);
+    });
+    
+    dropdown.style.display = 'block';
+}
+
+function hideAutocompleteDropdown() {
+    const dropdown = $('projectAutocompleteDropdown');
+    if (dropdown) {
+        dropdown.style.display = 'none';
+    }
+    activeAutocompleteIndex = -1;
+    autocompleteFilteredFiles = [];
+}
+
+function selectAutocompleteItem(file, atIndex) {
+    const text = projectChatInput.value;
+    const cursor = projectChatInput.selectionStart;
+    
+    state.project.selectedFiles.add(file.path);
+    updateContextBar();
+    updateTreeItemTags();
+    
+    const beforeAt = text.substring(0, atIndex);
+    const afterCursor = text.substring(cursor);
+    
+    projectChatInput.value = `${beforeAt}@${file.path} ${afterCursor}`;
+    const newCursorPos = atIndex + file.path.length + 2;
+    projectChatInput.focus();
+    projectChatInput.setSelectionRange(newCursorPos, newCursorPos);
+    
+    hideAutocompleteDropdown();
+    projectChatInput.dispatchEvent(new Event('input'));
+}
+
+function handleChatInputKeydown(e) {
+    const dropdown = $('projectAutocompleteDropdown');
+    if (!dropdown || dropdown.style.display === 'none') return;
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateAutocomplete(1);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateAutocomplete(-1);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (activeAutocompleteIndex !== -1 && autocompleteFilteredFiles[activeAutocompleteIndex]) {
+            const text = projectChatInput.value;
+            const cursor = projectChatInput.selectionStart;
+            const lastAtIdx = text.lastIndexOf('@', cursor - 1);
+            if (lastAtIdx !== -1) {
+                selectAutocompleteItem(autocompleteFilteredFiles[activeAutocompleteIndex], lastAtIdx);
+            }
+        }
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        hideAutocompleteDropdown();
+    }
+}
+
+function navigateAutocomplete(direction) {
+    const dropdown = $('projectAutocompleteDropdown');
+    const items = dropdown.querySelectorAll('.autocomplete-item');
+    if (items.length === 0) return;
+    
+    if (activeAutocompleteIndex !== -1 && items[activeAutocompleteIndex]) {
+        items[activeAutocompleteIndex].classList.remove('active');
+    }
+    
+    activeAutocompleteIndex = (activeAutocompleteIndex + direction + items.length) % items.length;
+    
+    const activeItem = items[activeAutocompleteIndex];
+    activeItem.classList.add('active');
+    activeItem.scrollIntoView({ block: 'nearest' });
+}
+
+// Interactive divider resizing logic for sidebar and assistant panel
+function initResizers() {
+    const sidebar = document.querySelector('.sidebar');
+    const sidebarResizer = $('sidebarResizer');
+    
+    if (sidebar && sidebarResizer) {
+        sidebarResizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            document.body.style.cursor = 'col-resize';
+            sidebarResizer.classList.add('dragging');
+            
+            function onMouseMove(moveEvent) {
+                const newWidth = moveEvent.clientX;
+                if (newWidth > 200 && newWidth < 600) {
+                    sidebar.style.width = `${newWidth}px`;
+                    sidebar.style.minWidth = `${newWidth}px`;
+                }
+            }
+            
+            function onMouseUp() {
+                document.body.style.cursor = '';
+                sidebarResizer.classList.remove('dragging');
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                
+                if (window.monacoEditor) {
+                    window.monacoEditor.layout();
+                }
+            }
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
+    const chatPane = document.querySelector('.workspace-chat-pane');
+    const chatResizer = $('chatResizer');
+    const workspaceContainer = document.querySelector('.project-workspace-container');
+
+    if (chatPane && chatResizer && workspaceContainer) {
+        chatResizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            document.body.style.cursor = 'col-resize';
+            chatResizer.classList.add('dragging');
+
+            const editorContainer = $('monacoEditorContainer');
+            if (editorContainer) editorContainer.style.pointerEvents = 'none';
+            
+            const initialPaneWidth = chatPane.getBoundingClientRect().width;
+            const startX = e.clientX;
+
+            function onMouseMove(moveEvent) {
+                const deltaX = moveEvent.clientX - startX;
+                const newWidth = initialPaneWidth - deltaX;
+                const containerWidth = workspaceContainer.getBoundingClientRect().width;
+                
+                if (newWidth > 280 && newWidth < containerWidth - 300) {
+                    chatPane.style.width = `${newWidth}px`;
+                    
+                    if (window.monacoEditor) {
+                        window.monacoEditor.layout();
+                    }
+                }
+            }
+            
+            function onMouseUp() {
+                document.body.style.cursor = '';
+                chatResizer.classList.remove('dragging');
+                if (editorContainer) editorContainer.style.pointerEvents = 'auto';
+                
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                
+                if (window.monacoEditor) {
+                    window.monacoEditor.layout();
+                }
+            }
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
     }
 }
