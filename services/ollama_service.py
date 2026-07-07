@@ -15,6 +15,7 @@ def call_ollama(messages, model=None, stream=False):
         "model": model,
         "messages": messages,
         "stream": stream,
+        "keep_alive": "15m",  # Giữ mô hình trong GPU 15 phút sau lần gọi cuối
         "options": {
             "temperature": 0.2,
             "num_predict": 4096,

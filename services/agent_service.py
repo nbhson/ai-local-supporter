@@ -275,8 +275,8 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
             
             # Append result to messages history for next turn
             model_tool_result = tool_result
-            if len(model_tool_result) > 8000:
-                model_tool_result = model_tool_result[:8000] + "\n\n...[content truncated to save context]..."
+            if len(model_tool_result) > 15000:
+                model_tool_result = model_tool_result[:15000] + "\n\n...[content truncated to save context]..."
             
             messages.append({
                 "role": "user",

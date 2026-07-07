@@ -459,8 +459,8 @@ def chat_project(session_id):
                 try:
                     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
-                    if len(content) > 8000:
-                        content = content[:8000] + "\n\n...[content truncated to save context]..."
+                    if len(content) > 15000:
+                        content = content[:15000] + "\n\n...[content truncated to save context]..."
                     context_str_parts.append(f"\nFile: `{rel_path}`\n```\n{content}\n```")
                 except Exception as e:
                     context_str_parts.append(f"\nFile: `{rel_path}` (Error reading content: {str(e)})")
