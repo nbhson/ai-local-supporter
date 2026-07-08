@@ -8,6 +8,8 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 
 - 🚀 **[Hướng dẫn Cài đặt & Khắc phục sự cố](INSTALLATION.md)**: Chi tiết cách cài đặt các thành phần phụ thuộc, tải model Ollama, thiết lập Redis và giải quyết các lỗi thường gặp trên macOS và Windows.
 - 📐 **[Tài liệu Kiến trúc Hệ thống](ARCHITECTURE.md)**: Giải thích chi tiết về sơ đồ kiến trúc, các design pattern áp dụng, cấu trúc thư mục dự án, cấu trúc cơ sở dữ liệu và các API endpoints của hệ thống.
+- ⚡ **[So sánh hiệu năng: CLI vs. App](OLLAMA_CLI_VS_APP.md)**: Giải thích tại sao chạy Ollama qua dòng lệnh nhanh hơn qua giao diện App/Web và cách tối ưu hóa.
+
 
 ---
 
@@ -60,7 +62,7 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 
 - **Backend**: Python Flask, Celery
 - **Frontend**: HTML, CSS, JavaScript (thuần)
-- **AI / LLM**: Ollama (Local LLM & Embedding)
+- **AI / LLM**: Ollama (Local LLM), FastEmbed (Local CPU-based Embedding)
 - **Database**: SQLite (Session history), ChromaDB (Vector DB)
 - **Message Broker**: Redis (Celery task queue)
 - **OCR Engine**: Tesseract OCR (Fallback)

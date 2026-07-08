@@ -8,5 +8,6 @@ pytesseract
 celery==5.4.0
 redis==5.0.1
 flask-sqlalchemy==3.1.1
-chromadb==0.5.3
+chromadb==1.5.9
 langchain-text-splitters==0.2.2
+fastembed==0.5.0

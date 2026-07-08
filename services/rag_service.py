@@ -11,8 +11,26 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 # Persistent session for connection pooling
 rag_session = requests.Session()
 
+_fastembed_model = None
+
+def get_embedding_model():
+    global _fastembed_model
+    if _fastembed_model is None:
+        from fastembed import TextEmbedding
+        # BAAI/bge-small-en-v1.5 is default, extremely fast and accurate
+        _fastembed_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    return _fastembed_model
+
 def get_ollama_embedding(text, model=None):
-    """Generate embeddings for text using the local Ollama instance."""
+    """Generate embeddings for text using fastembed on CPU. Falls back to Ollama if fastembed fails."""
+    try:
+        model_instance = get_embedding_model()
+        embeddings = list(model_instance.embed([text]))
+        if embeddings:
+            return [float(x) for x in embeddings[0]]
+    except Exception as e:
+        print(f"fastembed error: {e}. Falling back to Ollama API.")
+        
     model = model or config.EMBEDDING_MODEL
     url = f"{config.OLLAMA_URL.rstrip('/')}/embeddings"
     
@@ -25,13 +43,19 @@ def get_ollama_embedding(text, model=None):
         response.raise_for_status()
         return response.json().get("embedding")
     except Exception as e:
-        print(f"Error generating embedding in get_ollama_embedding: {e}")
+        print(f"Error generating embedding in fallback Ollama: {e}")
         return None
 
 def get_ollama_embeddings_batch(texts, model=None):
-    """Generate embeddings for a list of texts in a single batch call using Ollama /api/embed."""
+    """Generate embeddings for a list of texts using fastembed batching. Falls back to Ollama API."""
     if not texts:
         return []
+    try:
+        model_instance = get_embedding_model()
+        embeddings = list(model_instance.embed(texts))
+        return [[float(x) for x in emb] for emb in embeddings]
+    except Exception as e:
+        print(f"fastembed batch error: {e}. Falling back to Ollama API.")
         
     model = model or config.EMBEDDING_MODEL
     url = f"{config.OLLAMA_URL.rstrip('/')}/embed"
@@ -45,8 +69,7 @@ def get_ollama_embeddings_batch(texts, model=None):
         response.raise_for_status()
         return response.json().get("embeddings", [])
     except Exception as e:
-        print(f"Error generating batch embedding (Ollama /api/embed): {e}. Falling back to sequential embeddings.")
-        # Fallback to sequential calls with same-length list mapping (including None for failures)
+        print(f"Error generating batch embedding fallback Ollama: {e}. Falling back to sequential embeddings.")
         embeddings = []
         for t in texts:
             vector = get_ollama_embedding(t, model)

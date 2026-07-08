@@ -29,7 +29,7 @@ Hệ thống được thiết kế và vận hành dựa trên các mô hình ki
 
 1.  **Kiến trúc RAG cục bộ (Local Retrieval-Augmented Generation):**
     *   *Mô tả:* Kiến trúc sinh văn bản tăng cường truy xuất dữ liệu cục bộ.
-    *   *Áp dụng:* Văn bản được phân mảnh (chunking), tính toán vector nhúng bằng model `nomic-embed-text` và lưu trữ tại ChromaDB. Khi người dùng hỏi, hệ thống truy xuất các đoạn ngữ cảnh phù hợp nhất để làm đầu vào cho LLM trả lời, giúp tránh giới hạn cửa sổ ngữ cảnh và tăng độ chính xác.
+    *   *Áp dụng:* Văn bản được phân mảnh (chunking), tính toán vector nhúng bằng thư viện `fastembed` chạy trên CPU thông qua mô hình `BAAI/bge-small-en-v1.5` (hoặc cấu hình fallback tới Ollama `nomic-embed-text` nếu cần) và lưu trữ tại ChromaDB. Khi người dùng hỏi, hệ thống truy xuất các đoạn ngữ cảnh phù hợp nhất để làm đầu vào cho LLM trả lời, giúp tránh giới hạn cửa sổ ngữ cảnh và tăng độ chính xác.
 2.  **Mô hình Task Queue / Background Worker (Broker-Worker Pattern):**
     *   *Mô tả:* Mô hình xử lý bất đồng bộ qua hàng đợi thông điệp để thực hiện các tác vụ nặng mà không gây nghẽn tiến trình chính.
     *   *Áp dụng:* API Web đóng vai trò là **Producer** đẩy các yêu cầu xử lý tài liệu vào **Redis** (đóng vai trò **Message Broker**). [tasks.py](tasks.py) đóng vai trò **Consumer / Worker** liên tục lắng nghe và xử lý ngầm (đọc file, OCR, sinh embeddings), đảm bảo API phản hồi cho giao diện dưới `50ms` (Non-blocking UI).
@@ -94,10 +94,9 @@ graph TD
 6.  **SQLite Database (`ai_local_support.db`):**
     *   Cơ sở dữ liệu lưu trữ quan hệ để lưu giữ thông tin phiên làm việc ([services/models.py](services/models.py)) giúp chia sẻ trạng thái chung giữa Flask và Celery.
 7.  **ChromaDB Vector Database (`./chroma_db`):**
-    *   Cơ sở dữ liệu Vector cục bộ dạng nhúng (embedded).
-    *   Lưu trữ các đoạn tài liệu được cắt nhỏ kèm Vector 768 chiều được tính toán từ model `nomic-embed-text` của Ollama.
+    *   Lưu trữ các đoạn tài liệu được cắt nhỏ kèm Vector nhúng (ví dụ: 384 chiều từ `bge-small-en-v1.5`) được tính toán nhanh trên CPU bởi `fastembed`.
 8.  **Ollama (AI Local Runner):**
-    *   Cung cấp API để chạy cục bộ các model LLM (`qwen2.5-coder`, `deepseek-r1`, `qwen2.5-vl`...) và Embedding Model (`nomic-embed-text`).
+    *   Cung cấp API để chạy cục bộ các model LLM (`qwen2.5-coder`, `deepseek-r1`, `qwen2.5-vl`...). Phần Embedding được chuyển ra ngoài để chạy trên CPU nhằm tránh tranh chấp VRAM với Ollama.
 
 ---
 
@@ -203,7 +202,7 @@ ai-local-support/
     *   Đọc và trích xuất toàn bộ văn bản của tài liệu.
     *   Nếu là ảnh và model chat không hỗ trợ Vision, chạy Tesseract OCR để lấy chữ.
     *   Sử dụng `RecursiveCharacterTextSplitter` chia văn bản thành các đoạn (chunks) dài 1000 ký tự (trùng lặp 200 ký tự).
-    *   Gọi Ollama sinh vector embeddings cho từng chunk và lưu vào Collection `sess_<session_id>` của **ChromaDB**.
+    *   Sử dụng thư viện `fastembed` tính toán vector embeddings cho từng chunk trên CPU và lưu vào Collection `sess_<session_id>` của **ChromaDB**.
     *   Cập nhật cơ sở dữ liệu `document_sessions`: set `status = 'ready'`.
 4.  **Client UI** liên tục gửi yêu cầu thăm dò (polling) API `/api/doc/status/<session_id>` mỗi 2 giây. Khi nhận được trạng thái `'ready'`, giao diện sẽ mở khóa khung chat và hiển thị lời chào.
 
@@ -211,7 +210,7 @@ ai-local-support/
 
 1.  Người dùng gửi câu hỏi: *"Hạn thanh toán của hợp đồng này là ngày bao nhiêu?"*
 2.  **Flask API** nhận câu hỏi:
-    *   Gọi Ollama lấy vector embedding của câu hỏi bằng model `nomic-embed-text`.
+    *   Tính toán vector embedding của câu hỏi bằng thư viện `fastembed` trên CPU.
     *   Gửi vector câu hỏi truy vấn vào **ChromaDB** của phiên đó để lấy ra **Top-4 đoạn văn bản liên quan nhất**.
     *   Gộp 4 đoạn văn bản này lại làm **Context** (ngữ cảnh).
 3.  **Flask** gửi câu hỏi + Ngữ cảnh vào Prompt gửi tới LLM chat:

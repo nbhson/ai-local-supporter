@@ -103,38 +103,52 @@ def get_simple_tree_str(nodes, depth=0, max_depth=None, max_entries_per_dir=None
             lines.append(f"{indent}📄 {node['name']}")
     return lines
 
-def parse_tool_call(text):
+def parse_all_tool_calls(text):
+    """
+    Parses all tool calls from the assistant response text.
+    Returns a list of dicts: [{'tool': tool_name, 'args': tool_args}]
+    """
     if '[FINISH]' in text:
-        return {'tool': 'FINISH', 'args': {}}
+        return [{'tool': 'FINISH', 'args': {}}]
         
-    read_match = re.search(r'\[READ_FILE:\s*([^\s\]]+)\]', text)
-    if read_match:
-        return {'tool': 'READ_FILE', 'args': {'path': read_match.group(1)}}
+    tool_calls = []
+    
+    # Match tool tags: [READ_FILE: ...], [LIST_DIR: ...], [SEARCH_FILES: ...], [RUN_COMMAND: ...], [WRITE_FILE: ...]
+    pattern = r'\[(READ_FILE|WRITE_FILE|LIST_DIR|SEARCH_FILES|RUN_COMMAND):\s*([^\]\n]+)\]'
+    matches = list(re.finditer(pattern, text))
+    
+    for idx, match in enumerate(matches):
+        tool_name = match.group(1)
+        arg_val = match.group(2).strip()
         
-    list_match = re.search(r'\[LIST_DIR:\s*([^\s\]]+)\]', text)
-    if list_match:
-        return {'tool': 'LIST_DIR', 'args': {'path': list_match.group(1)}}
-        
-    search_match = re.search(r'\[SEARCH_FILES:\s*([^\]]+)\]', text)
-    if search_match:
-        return {'tool': 'SEARCH_FILES', 'args': {'query': search_match.group(1).strip()}}
-        
-    run_match = re.search(r'\[RUN_COMMAND:\s*([^\]]+)\]', text)
-    if run_match:
-        return {'tool': 'RUN_COMMAND', 'args': {'command': run_match.group(1).strip()}}
-        
-    write_match = re.search(r'\[WRITE_FILE:\s*([^\s\]]+)\]', text)
-    if write_match:
-        path = write_match.group(1)
-        post_text = text[write_match.end():]
-        code_block = re.search(r'```(?:\w*)\n([\s\S]*?)```', post_text)
-        if code_block:
-            content = code_block.group(1)
-            return {'tool': 'WRITE_FILE', 'args': {'path': path, 'content': content}}
-        else:
-            return {'tool': 'WRITE_FILE', 'args': {'path': path, 'content': post_text.strip()}}
+        if tool_name == 'READ_FILE':
+            tool_calls.append({'tool': 'READ_FILE', 'args': {'path': arg_val}})
+        elif tool_name == 'LIST_DIR':
+            tool_calls.append({'tool': 'LIST_DIR', 'args': {'path': arg_val}})
+        elif tool_name == 'SEARCH_FILES':
+            tool_calls.append({'tool': 'SEARCH_FILES', 'args': {'query': arg_val}})
+        elif tool_name == 'RUN_COMMAND':
+            tool_calls.append({'tool': 'RUN_COMMAND', 'args': {'command': arg_val}})
+        elif tool_name == 'WRITE_FILE':
+            # Extract content between this WRITE_FILE tag and the next tool call tag, or end of text.
+            start_pos = match.end()
+            end_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            segment = text[start_pos:end_pos]
             
-    return None
+            # Extract code block if present
+            code_block = re.search(r'```(?:\w*)\n([\s\S]*?)```', segment)
+            if code_block:
+                content = code_block.group(1)
+            else:
+                content = segment.strip()
+            tool_calls.append({'tool': 'WRITE_FILE', 'args': {'path': arg_val, 'content': content}})
+            
+    return tool_calls
+
+def parse_tool_call(text):
+    """Legacy parser for compatibility with tests."""
+    calls = parse_all_tool_calls(text)
+    return calls[0] if calls else None
 
 from services.agent_tool_service import ToolRegistry
 
@@ -162,7 +176,7 @@ YOUR WORKFLOW:
 1. Understand the user's request.
 2. Outline your plan of actions in your thought process.
 3. Perform actions step-by-step using the following TOOL CALLS.
-4. ONLY call ONE tool at a time in a single turn. After a tool call tag, STOP generating text and wait for the tool output from the system.
+4. You can call multiple tools at the end of your response in parallel if you need to gather information or make changes to multiple files (e.g. read multiple files or write multiple files). Output all tool calls you want to execute in this turn together.
 5. Once you have finished all tasks and verified them, output [FINISH] with a final explanation of the changes.
 
 TOOL CALL SYNTAX:
@@ -187,7 +201,7 @@ To call a tool, you MUST output the exact tag format at the very end of your res
 RULES:
 - When writing files, ALWAYS output the FULL file content in code block.
 - Paths must be relative to the project root (no leading '/').
-- Do not output multiple tool calls in one turn. Output exactly ONE tool call tag at the end of your response when you need info or action.
+- You can output multiple tool call tags at the end of your response when you need info or actions on multiple files.
 - For thought process, keep it extremely concise (1-2 sentences) inside <think>...</think>. For simple greetings or casual chat, SKIP the thought process and reply immediately.
 - CRITICAL: You must ONLY read files that actually exist in the project. Check the "CURRENT DIRECTORY TREE STRUCTURE" list above to verify if a file exists before trying to read it. Do NOT guess, assume, or hallucinate file paths (e.g. project-overview.md, frontend-architecture.md, etc.) if they are not listed in the tree.
 - CRITICAL: If a file's content is already provided in the ADDITIONAL CONTEXT, DO NOT use [READ_FILE] on it and DO NOT print its code in your response. Answer the user directly!
@@ -252,61 +266,63 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
             # Append assistant response to messages history
             messages.append({"role": "assistant", "content": current_answer})
             
-            # Parse tool call
-            tool_call = parse_tool_call(current_answer)
-            if not tool_call:
+            # Parse tool calls
+            tool_calls = parse_all_tool_calls(current_answer)
+            if not tool_calls:
                 yield format_sse_event('agent_status', status='Finished (No tool call)' if language == 'en' else 'Hoàn thành (Không có tool call)')
                 break
                 
-            tool_name = tool_call['tool']
-            tool_args = tool_call['args']
-            
-            # Yield tool call event
-            yield format_sse_event('tool_call', tool=tool_name, args=tool_args)
-            
-            tool_status = f"Running tool {tool_name}..." if language == 'en' else f"Đang chạy tool {tool_name}..."
-            if tool_name == 'READ_FILE':
-                tool_status = f"Reading file: {tool_args.get('path')}..." if language == 'en' else f"Đang đọc file: {tool_args.get('path')}..."
-            elif tool_name == 'WRITE_FILE':
-                tool_status = f"Writing file: {tool_args.get('path')}..." if language == 'en' else f"Đang ghi file: {tool_args.get('path')}..."
-            elif tool_name == 'RUN_COMMAND':
-                tool_status = f"Running command: {tool_args.get('command')}..." if language == 'en' else f"Đang chạy lệnh: {tool_args.get('command')}..."
-            yield format_sse_event('agent_status', status=tool_status)
-            time.sleep(0.1)
-            
-            if tool_name == 'FINISH':
+            # Check for FINISH
+            has_finish = any(tc['tool'] == 'FINISH' for tc in tool_calls)
+            if has_finish:
                 yield format_sse_event('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
                 break
             
-            # Execute tool
-            tool_result = execute_agent_tool(tool_name, tool_args, project_path)
-            if tool_name == 'WRITE_FILE':
-                invalidate_project_tree_cache(session_id)
+            results_contents = []
+            for idx, tool_call in enumerate(tool_calls):
+                tool_name = tool_call['tool']
+                tool_args = tool_call['args']
+                call_id = f"call_{iteration}_{idx}"
+                
+                # Yield tool call event
+                yield format_sse_event('tool_call', tool=tool_name, args=tool_args, call_id=call_id)
+                
+                tool_status = f"Running tool {tool_name}..." if language == 'en' else f"Đang chạy tool {tool_name}..."
+                if tool_name == 'READ_FILE':
+                    tool_status = f"Reading file: {tool_args.get('path')}..." if language == 'en' else f"Đang đọc file: {tool_args.get('path')}..."
+                elif tool_name == 'WRITE_FILE':
+                    tool_status = f"Writing file: {tool_args.get('path')}..." if language == 'en' else f"Đang ghi file: {tool_args.get('path')}..."
+                elif tool_name == 'RUN_COMMAND':
+                    tool_status = f"Running command: {tool_args.get('command')}..." if language == 'en' else f"Đang chạy lệnh: {tool_args.get('command')}..."
+                yield format_sse_event('agent_status', status=tool_status)
+                time.sleep(0.05)
+                
+                # Execute tool
+                tool_result = execute_agent_tool(tool_name, tool_args, project_path)
+                if tool_name == 'WRITE_FILE':
+                    invalidate_project_tree_cache(session_id)
+                
+                # Yield tool result event
+                display_result = tool_result
+                if len(display_result) > 5000:
+                    display_result = display_result[:5000] + "\n...[output truncated due to length]"
+                yield format_sse_event('tool_result', tool=tool_name, args=tool_args, result=display_result, call_id=call_id)
+                
+                post_status = f"Finished tool {tool_name}." if language == 'en' else f"Đã chạy xong tool {tool_name}."
+                yield format_sse_event('agent_status', status=post_status)
+                time.sleep(0.05)
+                
+                # Format output for model prompt
+                model_tool_result = tool_result
+                if len(model_tool_result) > 15000:
+                    model_tool_result = model_tool_result[:15000] + "\n\n...[content truncated to save context]..."
+                results_contents.append(f"Tool execution result for [{tool_name}] with args {json.dumps(tool_args)}:\n{model_tool_result}")
             
-            # Yield tool result event
-            display_result = tool_result
-            if len(display_result) > 5000:
-                display_result = display_result[:5000] + "\n...[output truncated due to length]"
-            yield format_sse_event('tool_result', tool=tool_name, args=tool_args, result=display_result)
-            
-            post_status = f"Finished. AI is analyzing results..." if language == 'en' else f"Đã chạy xong tool. AI đang phân tích kết quả..."
-            if tool_name == 'READ_FILE':
-                post_status = f"Read finished. AI is analyzing file..." if language == 'en' else f"Đã đọc file xong. AI đang phân tích..."
-            elif tool_name == 'WRITE_FILE':
-                post_status = f"Write finished. AI is validating..." if language == 'en' else f"Đã ghi file xong. AI đang kiểm tra..."
-            elif tool_name == 'RUN_COMMAND':
-                post_status = f"Command finished. AI is analyzing output..." if language == 'en' else f"Đã chạy lệnh xong. AI đang phân tích kết quả..."
-            yield format_sse_event('agent_status', status=post_status)
-            time.sleep(0.1)
-            
-            # Append result to messages history for next turn
-            model_tool_result = tool_result
-            if len(model_tool_result) > 15000:
-                model_tool_result = model_tool_result[:15000] + "\n\n...[content truncated to save context]..."
-            
+            # Combine all results into one user message for the next iteration
+            combined_results = "\n\n---\n\n".join(results_contents)
             messages.append({
                 "role": "user",
-                "content": f"Tool execution result for [{tool_name}]:\n{model_tool_result}\n\nPlease proceed to the next step."
+                "content": f"Tool execution results:\n\n{combined_results}\n\nPlease proceed to the next step."
             })
         
         # Save final response summary to SQLite

@@ -1295,6 +1295,7 @@ async function sendProjectMessage() {
         const decoder = new TextDecoder("utf-8");
         let fullText = "";
         let currentStepId = null;
+        let stepMap = {};
         let buffer = "";
 
         while (true) {
@@ -1322,10 +1323,15 @@ async function sendProjectMessage() {
                             fullText += data.content;
                             updateAgentText(bubble, fullText);
                         } else if (data.type === 'tool_call') {
-                            currentStepId = addAgentTimelineStep(bubble, data.tool, data.args);
+                            const stepId = addAgentTimelineStep(bubble, data.tool, data.args);
+                            currentStepId = stepId;
+                            if (data.call_id) {
+                                stepMap[data.call_id] = stepId;
+                            }
                         } else if (data.type === 'tool_result') {
+                            const stepId = (data.call_id && stepMap[data.call_id]) ? stepMap[data.call_id] : currentStepId;
                             const status = data.result.startsWith('Error') ? 'error' : 'success';
-                            await updateAgentTimelineStep(currentStepId, status, data.result, data.tool, data.args);
+                            await updateAgentTimelineStep(stepId, status, data.result, data.tool, data.args);
                         } else if (data.error) {
                             updateAgentText(bubble, `❌ **Lỗi:** ${data.error}`);
                         }

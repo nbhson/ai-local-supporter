@@ -34,14 +34,12 @@ pip install -r requirements.txt
 ```
 
 ### Bước 2: Tải các model Ollama
-Đảm bảo ứng dụng Ollama đang chạy, sau đó kéo các model LLM và Embedding về:
+Đảm bảo ứng dụng Ollama đang chạy, sau đó kéo model LLM về:
 ```bash
 # Tải model LLM chính để chat & phân tích (ví dụ: qwen2.5-coder)
 ollama pull qwen2.5-coder:14b
-
-# BẮT BUỘC: Tải model nhúng vector (embedding) phục vụ tìm kiếm RAG
-ollama pull nomic-embed-text
 ```
+*(Lưu ý: Ứng dụng mặc định sử dụng thư viện **fastembed** để sinh vector embedding trực tiếp trên CPU thông qua ONNX. Thư viện này tự động tải mô hình siêu nhẹ `BAAI/bge-small-en-v1.5` về ở lần chạy đầu tiên, giúp giải phóng GPU và tránh xung đột/tráo đổi model trong VRAM. Bạn không cần tải `nomic-embed-text` qua Ollama nữa trừ khi muốn dùng làm cấu hình dự phòng).*
 
 ### Bước 3: Cài đặt và khởi chạy Redis Server
 Redis được dùng làm message broker cho Celery. Trên macOS, bạn có hai lựa chọn:
@@ -112,11 +110,11 @@ pip install -r requirements.txt
 ```
 
 ### Bước 2: Tải các model Ollama
-Đảm bảo ứng dụng Ollama đang chạy dưới Taskbar, sau đó tải các model cần thiết:
+Đảm bảo ứng dụng Ollama đang chạy dưới Taskbar, sau đó tải model cần thiết:
 ```powershell
 ollama pull qwen2.5-coder:14b
-ollama pull nomic-embed-text
 ```
+*(Lưu ý: Mô hình nhúng vector embedding hiện tại được chạy trực tiếp bằng **fastembed** trên CPU qua ONNX mà không cần chạy qua Ollama, giúp tăng tốc độ đáng kể).*
 
 ### Bước 3: Cài đặt và Khởi chạy Redis Server
 Có hai cách thiết lập Redis trên Windows:
@@ -221,12 +219,16 @@ Bạn có thể thay đổi các cấu hình như Model mặc định, URL cổn
      wsl --shutdown
      ```
 
-### 5. AI phản hồi chậm khi chạy ứng dụng Web so với Commandline / Trễ phân giải kết nối / Tràn VRAM (Model Thrashing)
+### 5. AI phản hồi chậm khi chạy ứng dụng Web so với Commandline / Trễ phân giải kết nối
+> [!NOTE]
+> Xem tài liệu chi tiết giải thích kỹ thuật và các cách khắc phục tại đây: **[So sánh hiệu năng: CLI vs. App](OLLAMA_CLI_VS_APP.md)**.
+
 - **Nguyên nhân**:
   1. **Lỗi phân giải tên miền (macOS):** Python khi gửi request tới URL dạng `http://localhost:11434` sẽ bị trễ ~1.0 giây mỗi lần kết nối do cơ chế tìm kiếm IPv6. Với các luồng lặp của Agent (3-5 lần gọi API), độ trễ này cộng dồn làm ứng dụng rất chậm.
-  2. **Tranh chấp bộ nhớ VRAM (Model Thrashing):** Khi sử dụng chức năng "Chat tài liệu" (RAG), hệ thống phải sử dụng cả Embedding model (`nomic-embed-text`) và Chat model. Nếu VRAM của card đồ họa (hoặc RAM trên máy Mac) bị đầy, Ollama sẽ liên tục dỡ model chat ra ngoài để nạp model embedding vào, rồi sau đó lại làm ngược lại. Quá trình swap này mất từ 5-20 giây mỗi lượt chat.
+  2. **Tranh chấp bộ nhớ VRAM (Model Thrashing) đã được giải quyết:** Trước đây, khi chạy cả Chat và Embedding trên Ollama, VRAM bị tranh chấp liên tục gây chậm trễ. Hiện tại hệ thống đã tối ưu hóa bằng cách chuyển phần Embedding chạy trực tiếp trên Python CPU bằng thư viện **fastembed** (ONNX), loại bỏ hoàn toàn hiện tượng tráo đổi model trong VRAM.
 - **Giải pháp**:
   - **Khắc phục lỗi trễ kết nối:** Đảm bảo cấu hình biến `OLLAMA_URL` kết nối tới địa chỉ IP trực tiếp `http://127.0.0.1:11434/api` thay vì dùng chữ `localhost`.
+  - **Song song hóa tác vụ (Parallel Tool Calling):** Agent hiện tại hỗ trợ chạy nhiều công cụ song song trong cùng một lượt (ví dụ: đọc nhiều file hoặc chạy test đồng thời), giảm số lượng lượt gọi LLM xuống.
   - **Khuyến nghị lựa chọn kích thước Model dựa trên cấu hình RAM/VRAM máy tính:**
     - **Máy tính cấu hình thấp (RAM/VRAM < 16GB):** Ưu tiên sử dụng mô hình chat nhỏ gọn, hiệu quả cao như `qwen2.5-coder:7b`, `llama3:8b`, hoặc `deepseek-r1:8b`. Tránh dùng các bản 14B trở lên để không bị hiện tượng tràn VRAM swap sang ổ đĩa.
     - **Máy tính cấu hình tốt (RAM/VRAM >= 16GB trở lên hoặc Apple Silicon Mac M1/M2/M3 với Unified Memory lớn):** Có thể chạy mượt mà mô hình `qwen2.5-coder:14b` hoặc `deepseek-r1:14b` mặc định.
