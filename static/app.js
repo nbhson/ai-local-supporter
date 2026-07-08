@@ -337,7 +337,14 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
 
     while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+            if (typeof Prism !== 'undefined') {
+                messageBubbleElement.querySelectorAll('pre code').forEach(el => {
+                    Prism.highlightElement(el);
+                });
+            }
+            break;
+        }
 
         const container = messageBubbleElement.closest('.chat-messages');
         const threshold = 150;

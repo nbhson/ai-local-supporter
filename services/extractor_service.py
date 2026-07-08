@@ -1,5 +1,5 @@
 import os
-import PyPDF2
+import pypdf
 import docx
 import config
 from PIL import Image
@@ -18,7 +18,7 @@ class PdfExtractor(BaseExtractor):
     def extract(self, filepath: str) -> str:
         pages = []
         with open(filepath, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = pypdf.PdfReader(f)
             for page in reader.pages:
                 pages.append(page.extract_text() or "")
         return "\n".join(pages)

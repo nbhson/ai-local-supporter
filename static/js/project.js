@@ -627,37 +627,53 @@ async function saveActiveFile() {
     }
 }
 
-// Diff Engine: Simple LCS line diff
+// Diff Engine: Optimized Myers line diff using jsdiff library
 function diffLines(oldStr, newStr) {
-    const oldLines = oldStr.split('\n');
-    const newLines = newStr.split('\n');
-    const M = oldLines.length;
-    const N = newLines.length;
-
-    const dp = Array.from({ length: M + 1 }, () => Array(N + 1).fill(0));
-    for (let i = 1; i <= M; i++) {
-        for (let j = 1; j <= N; j++) {
-            if (oldLines[i - 1] === newLines[j - 1]) {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-            }
-        }
+    if (typeof Diff === 'undefined') {
+        console.warn("jsdiff library not loaded, using fallback.");
+        // Basic fallback just in case
+        return [{ type: 'unchanged', text: 'Error: jsdiff library not loaded', oldLine: 1, newLine: 1 }];
     }
-    let i = M, j = N;
+    
+    const diff = Diff.diffLines(oldStr, newStr);
     const result = [];
-    while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-            result.unshift({ type: 'unchanged', text: oldLines[i - 1], oldLine: i, newLine: j });
-            i--; j--;
-        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-            result.unshift({ type: 'added', text: newLines[j - 1], newLine: j });
-            j--;
-        } else {
-            result.unshift({ type: 'removed', text: oldLines[i - 1], oldLine: i });
-            i--;
+    let oldLineNum = 1;
+    let newLineNum = 1;
+
+    diff.forEach(part => {
+        const lines = part.value.split('\n');
+        if (lines.length > 1 && lines[lines.length - 1] === '') {
+            lines.pop();
         }
-    }
+
+        lines.forEach(lineText => {
+            if (part.added) {
+                result.push({
+                    type: 'added',
+                    text: lineText,
+                    newLine: newLineNum
+                });
+                newLineNum++;
+            } else if (part.removed) {
+                result.push({
+                    type: 'removed',
+                    text: lineText,
+                    oldLine: oldLineNum
+                });
+                oldLineNum++;
+            } else {
+                result.push({
+                    type: 'unchanged',
+                    text: lineText,
+                    oldLine: oldLineNum,
+                    newLine: newLineNum
+                });
+                oldLineNum++;
+                newLineNum++;
+            }
+        });
+    });
+
     return result;
 }
 
@@ -925,23 +941,35 @@ function formatProjectMessage(text) {
                     <span class="material-symbols-rounded">content_copy</span>
                 </button>
             </div>
-            <pre><code>${code}</code></pre>
+            <pre><code class="language-${lang || 'text'}">${escapedCode}</code></pre>
         </div>`;
 
         placeholders.push({ id: placeholderId, html: htmlBlock });
         return placeholderId;
     });
 
-    // 3. Apply standard markdown formatting safely
-    formatted = formatted
-        .replace(/`(.*?)`/g, '<code>$1</code>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        .replace(/\n/g, '<br>');
+    // 3. Apply standard markdown formatting using marked.js if available
+    if (typeof marked !== 'undefined') {
+        // marked.parse renders complete GitHub Flavored Markdown (GFM)
+        formatted = marked.parse(formatted);
+    } else {
+        // Fallback standard markdown formatting safely
+        formatted = formatted
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/\n/g, '<br>');
+    }
 
     // 4. Restore original code blocks
     placeholders.forEach(placeholder => {
-        formatted = formatted.replace(placeholder.id, placeholder.html);
+        // If marked.js wrapped our block-level placeholder in a <p> tag, strip it
+        const pWrapped = `<p>${placeholder.id}</p>`;
+        if (formatted.includes(pWrapped)) {
+            formatted = formatted.replace(pWrapped, placeholder.html);
+        } else {
+            formatted = formatted.replace(placeholder.id, placeholder.html);
+        }
     });
 
     return formatted;
@@ -1211,7 +1239,23 @@ async function updateAgentTimelineStep(stepId, status, result, toolName, args) {
         
         // Clean result for printing
         const escapedResult = result.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        bodyDiv.innerHTML = `<pre><code>${escapedResult}</code></pre>`;
+        
+        let codeClass = 'text';
+        if (toolName === 'READ_FILE' && args && args.path) {
+            const ext = args.path.split('.').pop().toLowerCase();
+            codeClass = ext;
+        } else if (toolName === 'RUN_COMMAND') {
+            codeClass = 'bash';
+        }
+        
+        bodyDiv.innerHTML = `<pre><code class="language-${codeClass}">${escapedResult}</code></pre>`;
+        
+        if (typeof Prism !== 'undefined') {
+            const codeEl = bodyDiv.querySelector('pre code');
+            if (codeEl) {
+                Prism.highlightElement(codeEl);
+            }
+        }
         
         const header = stepDiv.querySelector('.agent-step-header');
         header.addEventListener('click', () => {
@@ -1300,7 +1344,14 @@ async function sendProjectMessage() {
 
         while (true) {
             const { value, done } = await reader.read();
-            if (done) break;
+            if (done) {
+                if (typeof Prism !== 'undefined') {
+                    bubble.querySelectorAll('pre code').forEach(el => {
+                        Prism.highlightElement(el);
+                    });
+                }
+                break;
+            }
 
             const wasAtBottom = projectChatMessages.scrollHeight - projectChatMessages.scrollTop - projectChatMessages.clientHeight < 150;
             buffer += decoder.decode(value, { stream: true });

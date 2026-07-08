@@ -22,6 +22,7 @@ CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localho
 
 # Embedding Configuration for RAG
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+FASTEMBED_MODEL = os.environ.get("FASTEMBED_MODEL", "nomic-ai/nomic-embed-text-v1.5-Q")
 
 # Refactoring Readability & Magic Numbers Config
 AGENT_MAX_ITERATIONS = 10
@@ -40,7 +41,8 @@ MAX_TEXT_CHARS = 15000
 EXCLUDE_DIRS = {
     '.git', 'node_modules', '.venv', 'venv', 'env', '.idea', '__pycache__', 
     'dist', 'build', 'target', '.npm', '.cache', '.angular', '.next', '.nuxt',
-    '.sass-cache', '.svelte-kit', '.agents', '.gemini', 'coverage', '.nyc_output'
+    '.sass-cache', '.svelte-kit', '.agents', '.gemini', 'coverage', '.nyc_output',
+    '.pytest_cache', '.vscode', '.tox'
 }
 EXCLUDE_FILES = {'.DS_Store', 'Thumbs.db'}
 

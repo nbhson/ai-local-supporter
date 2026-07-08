@@ -17,8 +17,7 @@ def get_embedding_model():
     global _fastembed_model
     if _fastembed_model is None:
         from fastembed import TextEmbedding
-        # BAAI/bge-small-en-v1.5 is default, extremely fast and accurate
-        _fastembed_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        _fastembed_model = TextEmbedding(model_name=config.FASTEMBED_MODEL)
     return _fastembed_model
 
 def get_ollama_embedding(text, model=None):

@@ -19,12 +19,8 @@ from services.repositories import ProjectSessionRepository
 
 project_bp = Blueprint('project', __name__)
 
-EXCLUDE_DIRS = {
-    '.git', 'node_modules', '.venv', 'venv', 'env', '.idea', '__pycache__', 
-    'dist', 'build', 'target', '.npm', '.cache', '.angular', '.next', '.nuxt',
-    '.sass-cache', '.svelte-kit', '.agents', '.gemini', 'coverage', '.nyc_output'
-}
-EXCLUDE_FILES = {'.DS_Store', 'Thumbs.db'}
+EXCLUDE_DIRS = config.EXCLUDE_DIRS
+EXCLUDE_FILES = config.EXCLUDE_FILES
 
 
 

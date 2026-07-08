@@ -3,7 +3,6 @@ import time
 import logging
 import io
 import base64
-import PyPDF2
 import docx
 from PIL import Image
 import pytesseract
