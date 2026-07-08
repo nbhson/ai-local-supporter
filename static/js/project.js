@@ -628,11 +628,69 @@ async function saveActiveFile() {
 }
 
 // Diff Engine: Optimized Myers line diff using jsdiff library
+function diffLinesFallback(oldStr, newStr) {
+    const oldLines = oldStr.split(/\r?\n/);
+    const newLines = newStr.split(/\r?\n/);
+    
+    // If the files are large, avoid O(N^2) LCS DP to prevent browser freeze.
+    if (oldLines.length > 500 || newLines.length > 500) {
+        const result = [];
+        let i = 0, j = 0;
+        while (i < oldLines.length || j < newLines.length) {
+            if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+                result.push({ type: 'unchanged', text: oldLines[i], oldLine: i + 1, newLine: j + 1 });
+                i++;
+                j++;
+            } else {
+                if (i < oldLines.length) {
+                    result.push({ type: 'removed', text: oldLines[i], oldLine: i + 1 });
+                    i++;
+                }
+                if (j < newLines.length) {
+                    result.push({ type: 'added', text: newLines[j], newLine: j + 1 });
+                    j++;
+                }
+            }
+        }
+        return result;
+    }
+
+    const m = oldLines.length;
+    const n = newLines.length;
+    const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+    
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (oldLines[i - 1] === newLines[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+    
+    let i = m, j = n;
+    const tempResult = [];
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+            tempResult.push({ type: 'unchanged', text: oldLines[i - 1], oldLine: i, newLine: j });
+            i--;
+            j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            tempResult.push({ type: 'added', text: newLines[j - 1], newLine: j });
+            j--;
+        } else {
+            tempResult.push({ type: 'removed', text: oldLines[i - 1], oldLine: i });
+            i--;
+        }
+    }
+    return tempResult.reverse();
+}
+
 function diffLines(oldStr, newStr) {
     if (typeof Diff === 'undefined') {
         console.warn("jsdiff library not loaded, using fallback.");
-        // Basic fallback just in case
-        return [{ type: 'unchanged', text: 'Error: jsdiff library not loaded', oldLine: 1, newLine: 1 }];
+        return diffLinesFallback(oldStr, newStr);
     }
     
     const diff = Diff.diffLines(oldStr, newStr);
