@@ -1,5 +1,5 @@
 from services.database import db
-from services.models import DocumentSession, DocumentFile, CodeSession, ChatSession, ProjectSession, ChatMessage
+from services.models import DocumentSession, DocumentFile, ChatSession, ProjectSession, ChatMessage
 
 class DocumentSessionRepository:
     @staticmethod
@@ -22,16 +22,6 @@ class DocumentSessionRepository:
         db.session.commit()
         return doc_file
 
-class CodeSessionRepository:
-    @staticmethod
-    def get_by_id(session_id):
-        return CodeSession.query.get(session_id)
-
-    @staticmethod
-    def save(session):
-        db.session.add(session)
-        db.session.commit()
-        return session
 
 class ChatSessionRepository:
     @staticmethod

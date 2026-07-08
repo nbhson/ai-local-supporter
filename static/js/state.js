@@ -3,7 +3,6 @@ const state = {
     activeTab: 'doc',
     language: 'en', // Default to English
     doc: { sessionId: null, filename: null, model: null, isProcessing: false },
-    code: { sessionId: null, codename: null, model: null, isProcessing: false },
     chat: { sessionId: null, model: null, isProcessing: false },
     project: {
         sessionId: null,
@@ -36,14 +35,6 @@ const clearSessionBtn = $('clearSessionBtn');
 const quickActions = $('quickActions');
 const docWelcome = $('docWelcome');
 const docChatMessages = $('docChatMessages');
-const codeInput = $('codeInput');
-const codeLanguage = $('codeLanguage');
-const analyzeCodeBtn = $('analyzeCodeBtn');
-const codeInfo = $('codeInfo');
-const codeFileName = $('codeFileName');
-const codeStatus = $('codeStatus');
-const clearCodeSessionBtn = $('clearCodeSessionBtn');
-const codeQuickActions = $('codeQuickActions');
 const chatInputContainer = $('chatInputContainer');
 const chatInput = $('chatInput');
 const sendBtn = $('sendBtn');

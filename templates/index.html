@@ -156,52 +156,6 @@
                     </div>
                 </div>
 
-                <!-- Code Info (only shows when code is analyzed/attached) -->
-                <div class="code-info" id="codeInfo" style="display:none; padding: 16px; border-bottom: 1px solid var(--border-color);">
-                    <div class="file-info" style="display: flex; align-items: center; gap: 10px; background: var(--bg-card); padding: 10px; border-radius: var(--radius-sm);">
-                        <div class="file-icon">
-                            <span class="material-symbols-rounded">terminal</span>
-                        </div>
-                        <div class="file-details" style="flex: 1; min-width: 0;">
-                            <p class="file-name" id="codeFileName" style="font-weight: 500; font-size: 0.9rem; color: var(--text-primary);">code.py</p>
-                            <p class="file-status" style="font-size: 0.8rem; color: var(--success);" id="codeStatus">✅ Đã phân tích</p>
-                        </div>
-                        <button class="btn-icon" id="clearCodeSessionBtn" title="Xóa">
-                            <span class="material-symbols-rounded">delete</span>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Code Input Section (shows by default, hides when code is active) -->
-                <div class="code-input-section" style="padding: 16px; border-bottom: 1px solid var(--border-color);">
-                    <div class="code-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <p class="section-title" style="margin: 0;"><span class="material-symbols-rounded inline-icon text-cyan">edit_note</span> Đính kèm Code (Tùy chọn)</p>
-                        <div class="language-select-wrapper">
-                            <select id="codeLanguage" style="padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-input); color: var(--text-primary); font-size: 0.8rem;">
-                                <option value="auto-detect">Tự động</option>
-                                <option value="python">Python</option>
-                                <option value="javascript">JavaScript</option>
-                                <option value="typescript">TypeScript</option>
-                                <option value="java">Java</option>
-                                <option value="cpp">C++</option>
-                                <option value="c">C</option>
-                                <option value="go">Go</option>
-                                <option value="rust">Rust</option>
-                                <option value="sql">SQL</option>
-                                <option value="html">HTML</option>
-                                <option value="css">CSS</option>
-                                <option value="bash">Bash</option>
-                                <option value="other">Khác</option>
-                            </select>
-                        </div>
-                    </div>
-                    <textarea id="codeInput" class="code-textarea" placeholder="Dán code của bạn vào đây..." rows="5" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-input); color: var(--text-primary); font-family: 'Fira Code', monospace; font-size: 0.8rem; resize: vertical; margin-bottom: 10px; box-sizing: border-box;"></textarea>
-                    <button id="analyzeCodeBtn" class="btn-primary" style="padding: 8px 12px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 0.85rem; font-weight: 600; width: 100%; border: none; border-radius: var(--radius-sm); background: var(--primary-color); color: white; cursor: pointer;">
-                        <span class="material-symbols-rounded btn-icon-left">analytics</span>
-                        Phân tích Code
-                    </button>
-                </div>
-
                 <!-- Free Chat Quick Actions (default) -->
                 <div class="quick-actions" id="chatQuickActions" style="display:none;">
                     <p class="section-title"><span class="material-symbols-rounded inline-icon text-indigo">auto_awesome</span> Câu hỏi gợi ý</p>
@@ -213,20 +167,6 @@
                     </button>
                     <button class="quick-btn" data-chat-question="Gợi ý kế hoạch du lịch Đà Lạt 3 ngày 2 đêm">
                         <span class="material-symbols-rounded btn-icon-small">travel_explore</span> Du lịch Đà Lạt
-                    </button>
-                </div>
-
-                <!-- Code Chat Quick Actions (visible only when code is active) -->
-                <div class="quick-actions" id="codeQuickActions" style="display:none;">
-                    <p class="section-title"><span class="material-symbols-rounded inline-icon text-cyan">auto_awesome</span> Câu hỏi gợi ý</p>
-                    <button class="quick-btn" data-code-question="Giải thích code này hoạt động như thế nào">
-                        <span class="material-symbols-rounded btn-icon-small">developer_mode</span> Giải thích code
-                    </button>
-                    <button class="quick-btn" data-code-question="Chỉ ra các vấn đề hoặc lỗi tiềm ẩn">
-                        <span class="material-symbols-rounded btn-icon-small">bug_report</span> Tìm lỗi
-                    </button>
-                    <button class="quick-btn" data-code-question="Làm thế nào để tối ưu code này?">
-                        <span class="material-symbols-rounded btn-icon-small">bolt</span> Tối ưu
                     </button>
                 </div>
             </div>

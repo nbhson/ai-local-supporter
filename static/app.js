@@ -22,7 +22,6 @@ async function loadModels() {
             if (enabledOptions.length > 0) {
                 modelSelect.value = enabledOptions[0].value;
                 if (!state.doc.model) state.doc.model = modelSelect.value;
-                if (!state.code.model) state.code.model = modelSelect.value;
                 if (!state.chat.model) state.chat.model = modelSelect.value;
             }
         }
@@ -51,7 +50,7 @@ async function switchTab(tab) {
     }
 
     // Auto initialize chat session if switching to chat and no session exists
-    if (tab === 'chat' && !state.chat.sessionId && !state.code.sessionId) {
+    if (tab === 'chat' && !state.chat.sessionId) {
         await initChatSession();
     }
 
@@ -66,9 +65,8 @@ function updateChatInput() {
         return;
     }
     const isDoc = tab === 'doc';
-    const isCodeActive = tab === 'chat' && !!state.code.sessionId;
-    const s = isDoc ? state.doc : (isCodeActive ? state.code : state.chat);
-    const hasSession = isDoc ? !!state.doc.sessionId : (isCodeActive ? !!state.code.sessionId : !!state.chat.sessionId);
+    const s = isDoc ? state.doc : state.chat;
+    const hasSession = isDoc ? !!state.doc.sessionId : !!state.chat.sessionId;
     const t = translations[state.language];
 
     if (hasSession) {
@@ -76,7 +74,7 @@ function updateChatInput() {
         chatInput.disabled = false;
         sendBtn.disabled = false;
         if (tab === 'chat') {
-            chatInput.placeholder = isCodeActive ? t.codeChatPlaceholder : t.chatPlaceholder;
+            chatInput.placeholder = t.chatPlaceholder;
         } else {
             chatInput.placeholder = t.docChatPlaceholder;
         }
@@ -140,29 +138,12 @@ function setupEventListeners() {
 
     // Clear sessions
     clearSessionBtn.addEventListener('click', clearDocSession);
-    if (clearCodeSessionBtn) clearCodeSessionBtn.addEventListener('click', clearCodeSession);
     clearChatSessionBtn.addEventListener('click', clearChatSession);
-
-    // Code analyze
-    if (analyzeCodeBtn) analyzeCodeBtn.addEventListener('click', analyzeCode);
-    if (codeInput) {
-        codeInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && e.ctrlKey) analyzeCode();
-        });
-    }
 
     // Quick actions - doc
     document.querySelectorAll('#tab-doc .quick-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             chatInput.value = btn.dataset.question;
-            sendMessage();
-        });
-    });
-
-    // Quick actions - code
-    document.querySelectorAll('#codeQuickActions .quick-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            chatInput.value = btn.dataset.codeQuestion;
             sendMessage();
         });
     });
@@ -183,8 +164,7 @@ async function sendMessage() {
 
     const tab = state.activeTab;
     const isDoc = tab === 'doc';
-    const isCodeActive = tab === 'chat' && !!state.code.sessionId;
-    const s = isDoc ? state.doc : (isCodeActive ? state.code : state.chat);
+    const s = isDoc ? state.doc : state.chat;
 
     if (s.isProcessing || !s.sessionId) return;
     s.isProcessing = true;
@@ -201,7 +181,7 @@ async function sendMessage() {
     showTypingIndicator(targetMessages);
 
     try {
-        const endpoint = isDoc ? '/api/doc/chat' : (isCodeActive ? '/api/chat/code/chat' : '/api/chat/chat');
+        const endpoint = isDoc ? '/api/doc/chat' : '/api/chat/chat';
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -260,24 +240,16 @@ const translations = {
         completed: '✅ Complete!',
         analyzed: '✅ Analyzed',
         docTab: 'Documents',
-        codeTab: 'Code',
         chatTab: 'Chat',
         projectTab: 'Projects',
-        pasteCode: 'Paste your code here',
-        analyzeCode: 'Analyze Code',
-        analyzingCode: '⏳ Analyzing...',
         chatPlaceholder: 'Type your question...',
         docChatPlaceholder: 'Ask about the document...',
-        codeChatPlaceholder: 'Ask about the code...',
         uploadError: 'File too large. Limit 50MB.',
         selectFileError: 'Please select a file first!',
         clearSession: 'Cleared. Upload new file.',
-        clearCodeSession: 'Cleared. Paste new code.',
         clearChatSession: 'Cleared chat history.',
         welcomeDoc: 'Document Analysis',
         welcomeDocDesc: 'Upload files to analyze and ask questions',
-        welcomeCode: 'Code Analysis',
-        welcomeCodeDesc: 'Paste code in sidebar to analyze and ask questions',
         welcomeChat: 'Free Chat',
         welcomeChatDesc: 'Ask anything you want with AI',
         welcomeProject: 'Project Workspace',
@@ -293,24 +265,16 @@ const translations = {
         completed: '✅ Hoàn tất!',
         analyzed: '✅ Đã phân tích',
         docTab: 'Tài liệu',
-        codeTab: 'Code',
         chatTab: 'Trò chuyện',
         projectTab: 'Dự án',
-        pasteCode: 'Dán code của bạn vào đây',
-        analyzeCode: 'Phân tích Code',
-        analyzingCode: '⏳ Đang phân tích...',
         chatPlaceholder: 'Nhập câu hỏi...',
         docChatPlaceholder: 'Nhập câu hỏi về tài liệu...',
-        codeChatPlaceholder: 'Nhập câu hỏi về code...',
         uploadError: 'File quá lớn. Giới hạn 50MB.',
-        selectFileError: 'Vui lòng paste code trước!',
+        selectFileError: 'Vui lòng chọn file trước!',
         clearSession: 'Đã xóa. Upload file mới.',
-        clearCodeSession: 'Đã xóa. Paste code mới.',
         clearChatSession: 'Đã xóa lịch sử chat.',
         welcomeDoc: 'Phân tích tài liệu',
         welcomeDocDesc: 'Upload file để phân tích và đặt câu hỏi',
-        welcomeCode: 'Phân tích Code',
-        welcomeCodeDesc: 'Dán code vào sidebar để phân tích và đặt câu hỏi',
         welcomeChat: 'Trò chuyện tự do',
         welcomeChatDesc: 'Hỏi bất cứ điều gì bạn muốn với AI',
         welcomeProject: 'Không gian Dự án',
@@ -336,10 +300,7 @@ function updateUILanguage() {
     const projectTabBtn = document.querySelector('[data-tab="project"] .tab-label');
     if (projectTabBtn) projectTabBtn.textContent = t.projectTab;
 
-    // Update code section
-    const codeTextarea = document.querySelector('.code-textarea');
-    if (codeTextarea) codeTextarea.placeholder = t.pasteCode;
-    if (analyzeCodeBtn) analyzeCodeBtn.innerHTML = `<span class="material-symbols-rounded btn-icon-left">analytics</span> ${t.analyzeCode}`;
+
 
     // Update welcome screens
     const docWelcomeH2 = document.querySelector('#docWelcome h2');
