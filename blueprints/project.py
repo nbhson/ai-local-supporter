@@ -61,7 +61,7 @@ def init_project():
         raise InvalidRequestError(error_msg)
         
     try:
-        tree, stats = scan_directory_and_stats(local_path, local_path, max_depth=config.AGENT_MAX_DEPTH)
+        tree, stats = scan_directory_and_stats(local_path, local_path)
         
         session = ProjectSession(
             session_id=session_id,
@@ -126,7 +126,7 @@ def upload_project_files(session_id):
         session.status = 'ready'
         ProjectSessionRepository.save(session)
         
-        tree, stats = scan_directory_and_stats(project_dir, project_dir, max_depth=config.AGENT_MAX_DEPTH)
+        tree, stats = scan_directory_and_stats(project_dir, project_dir)
         
         return jsonify({
             "success": True,
@@ -204,7 +204,7 @@ def rescan_project(session_id):
         raise SessionNotFoundError()
     try:
         invalidate_project_tree_cache(session_id)
-        tree, stats = scan_directory_and_stats(session.project_path, session.project_path, max_depth=config.AGENT_MAX_DEPTH)
+        tree, stats = scan_directory_and_stats(session.project_path, session.project_path)
         set_cached_project_tree(session_id, tree, stats)
         return jsonify({
             "tree": tree,
@@ -256,7 +256,7 @@ def chat_project(session_id):
     # Get initial project tree (limit depth for context)
     tree_nodes, stats = get_cached_project_tree(session_id)
     if tree_nodes is None:
-        tree_nodes, stats = scan_directory_and_stats(project_path, project_path, max_depth=config.AGENT_MAX_DEPTH)
+        tree_nodes, stats = scan_directory_and_stats(project_path, project_path)
         set_cached_project_tree(session_id, tree_nodes, stats)
     tree_str = "\n".join(get_simple_tree_str(tree_nodes))
     
