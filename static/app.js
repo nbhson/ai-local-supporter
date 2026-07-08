@@ -372,6 +372,7 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let fullText = "";
+    let buffer = "";
 
     while (true) {
         const { value, done } = await reader.read();
@@ -381,12 +382,16 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
         const threshold = 150;
         const wasAtBottom = container ? (container.scrollHeight - container.scrollTop - container.clientHeight < threshold) : false;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        
+        // Save the incomplete line to process in the next chunk
+        buffer = lines.pop();
 
         for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const dataStr = line.slice(6).trim();
+            const cleanLine = line.trim();
+            if (cleanLine.startsWith('data: ')) {
+                const dataStr = cleanLine.slice(6).trim();
                 if (dataStr === '[DONE]') break;
 
                 try {
@@ -398,7 +403,7 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
                         messageBubbleElement.innerHTML = formatMessage(`❌ **Lỗi:** ${data.error}`);
                     }
                 } catch (e) {
-                    // ignore partial json
+                    // Ignore parsing errors for partial or malformed lines
                 }
             }
         }

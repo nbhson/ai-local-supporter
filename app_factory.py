@@ -27,6 +27,17 @@ def create_app():
 
     db.init_app(app)
     
+    # Enable WAL mode for SQLite to prevent "database is locked" errors under concurrent write loads
+    if config.SQLALCHEMY_DATABASE_URI.startswith('sqlite'):
+        from sqlalchemy import event
+        from sqlalchemy.engine import Engine
+        @event.listens_for(Engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.close()
+    
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
     with app.app_context():

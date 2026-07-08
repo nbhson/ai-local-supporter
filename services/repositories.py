@@ -62,12 +62,14 @@ class ChatMessageRepository:
 
     @staticmethod
     def get_messages_by_session_id(session_id, limit=None):
-        query = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc())
         if limit:
-            # We fetch all, and take the slice since order_by is ascending and we want the *last* limit elements.
-            # Using chat_history[-limit:] is the current code pattern.
-            return query.all()
-        return query.all()
+            messages = ChatMessage.query.filter_by(session_id=session_id)\
+                .order_by(ChatMessage.created_at.desc())\
+                .limit(limit)\
+                .all()
+            messages.reverse()
+            return messages
+        return ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
 
     @staticmethod
     def save(message):

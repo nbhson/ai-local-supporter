@@ -4,6 +4,9 @@ import time
 import requests
 import config
 
+# Create a persistent session for HTTP connection pooling to Ollama API
+ollama_session = requests.Session()
+
 def is_vision_model(model_name):
     """Check if model supports vision/multimodal."""
     model_lower = model_name.lower()
@@ -30,7 +33,7 @@ def call_ollama(messages, model=None, stream=False):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = requests.post(
+            response = ollama_session.post(
                 f"{config.OLLAMA_URL}/chat", json=payload, timeout=(10, 600), stream=stream
             )
             if response.status_code != 200:

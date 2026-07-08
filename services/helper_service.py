@@ -14,15 +14,17 @@ def format_sse_event(event_type, **kwargs):
 
 def retrieve_chat_history(session_id, limit, skip_first=False):
     """Retrieve the last N chat messages for a session."""
-    chat_history = ChatMessageRepository.get_messages_by_session_id(session_id)
-    if not chat_history:
-        return []
-    
     if skip_first:
-        first_id = chat_history[0].id
-        recent = [msg for msg in chat_history[-limit:] if msg.id != first_id]
+        first_msg = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).first()
+        if not first_msg:
+            return []
+        first_id = first_msg.id
+        
+        # Fetch limit + 1 messages to ensure we get up to `limit` messages after skipping the first one
+        recent = ChatMessageRepository.get_messages_by_session_id(session_id, limit=limit + 1)
+        recent = [msg for msg in recent if msg.id != first_id][-limit:]
     else:
-        recent = chat_history[-limit:]
+        recent = ChatMessageRepository.get_messages_by_session_id(session_id, limit=limit)
         
     return [{"role": msg.role, "content": msg.content} for msg in recent]
 

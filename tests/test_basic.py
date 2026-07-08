@@ -101,5 +101,30 @@ def test_safe_join_project_path():
     with pytest.raises(ValueError):
         safe_join_project_path(base, "/etc/passwd")
 
+def test_project_tree_cache():
+    from services.agent_service import get_cached_project_tree, set_cached_project_tree, invalidate_project_tree_cache
+    session_id = "test_session_123"
+    
+    # Initially cache should be empty
+    tree, stats = get_cached_project_tree(session_id)
+    assert tree is None
+    assert stats is None
+    
+    # Store in cache
+    dummy_tree = [{"name": "file.py", "is_dir": False}]
+    dummy_stats = {"total_files": 1, "total_size": 100, "lang_stats": {"py": 1}}
+    set_cached_project_tree(session_id, dummy_tree, dummy_stats)
+    
+    # Retrieve from cache
+    cached_tree, cached_stats = get_cached_project_tree(session_id)
+    assert cached_tree == dummy_tree
+    assert cached_stats == dummy_stats
+    
+    # Invalidate cache
+    invalidate_project_tree_cache(session_id)
+    cached_tree, cached_stats = get_cached_project_tree(session_id)
+    assert cached_tree is None
+    assert cached_stats is None
+
 
 

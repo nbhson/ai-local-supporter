@@ -10,6 +10,30 @@ from services.models import ChatMessage
 from services.ollama_service import call_ollama
 from services.helper_service import get_lang_instruction, format_sse_event, retrieve_chat_history, save_chat_message
 
+# In-memory cache for project tree
+# Format: session_id -> {"tree": tree, "stats": stats, "timestamp": float}
+_project_tree_cache = {}
+
+def get_cached_project_tree(session_id):
+    """Retrieve the cached project tree and stats for a session."""
+    cache_entry = _project_tree_cache.get(session_id)
+    if cache_entry:
+        return cache_entry["tree"], cache_entry["stats"]
+    return None, None
+
+def set_cached_project_tree(session_id, tree, stats):
+    """Cache the project tree and stats for a session."""
+    _project_tree_cache[session_id] = {
+        "tree": tree,
+        "stats": stats,
+        "timestamp": time.time()
+    }
+
+def invalidate_project_tree_cache(session_id):
+    """Invalidate/delete the cached project tree for a session."""
+    if session_id in _project_tree_cache:
+        del _project_tree_cache[session_id]
+
 def scan_directory_and_stats(current_path, base_path, stats=None, current_depth=0, max_depth=None):
     if stats is None:
         stats = {
@@ -256,6 +280,8 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
             
             # Execute tool
             tool_result = execute_agent_tool(tool_name, tool_args, project_path)
+            if tool_name == 'WRITE_FILE':
+                invalidate_project_tree_cache(session_id)
             
             # Yield tool result event
             display_result = tool_result

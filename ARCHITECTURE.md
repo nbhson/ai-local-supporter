@@ -2,7 +2,7 @@
 
 Dự án này đã được nâng cấp từ một cấu trúc đồng bộ đơn giản (In-memory, single-threaded) lên một kiến trúc **Bất đồng bộ (Asynchronous Background Worker)** kết hợp với **RAG (Retrieval-Augmented Generation) cục bộ**.
 
-Dưới đây là mô tả chi tiết về mặt kiến trúc, cơ sở dữ liệu và luồng đi của dữ liệu trong hệ thống mới.
+Dưới đây là mô tả chi tiết về mặt kiến trúc, cấu trúc thư mục, APIs, cơ sở dữ liệu và luồng đi của dữ liệu trong hệ thống mới.
 
 ---
 
@@ -32,22 +32,22 @@ Hệ thống được thiết kế và vận hành dựa trên các mô hình ki
     *   *Áp dụng:* Văn bản được phân mảnh (chunking), tính toán vector nhúng bằng model `nomic-embed-text` và lưu trữ tại ChromaDB. Khi người dùng hỏi, hệ thống truy xuất các đoạn ngữ cảnh phù hợp nhất để làm đầu vào cho LLM trả lời, giúp tránh giới hạn cửa sổ ngữ cảnh và tăng độ chính xác.
 2.  **Mô hình Task Queue / Background Worker (Broker-Worker Pattern):**
     *   *Mô tả:* Mô hình xử lý bất đồng bộ qua hàng đợi thông điệp để thực hiện các tác vụ nặng mà không gây nghẽn tiến trình chính.
-    *   *Áp dụng:* API Web đóng vai trò là **Producer** đẩy các yêu cầu xử lý tài liệu vào **Redis** (đóng vai trò **Message Broker**). [Celery Workers](file:///Users/nguyenson/Github/ai-local-support/tasks.py) đóng vai trò **Consumer / Worker** liên tục lắng nghe và xử lý ngầm (đọc file, OCR, sinh embeddings), đảm bảo API phản hồi cho giao diện dưới `50ms` (Non-blocking UI).
+    *   *Áp dụng:* API Web đóng vai trò là **Producer** đẩy các yêu cầu xử lý tài liệu vào **Redis** (đóng vai trò **Message Broker**). [tasks.py](tasks.py) đóng vai trò **Consumer / Worker** liên tục lắng nghe và xử lý ngầm (đọc file, OCR, sinh embeddings), đảm bảo API phản hồi cho giao diện dưới `50ms` (Non-blocking UI).
 3.  **Kiến trúc Phân rã (Decoupled / Event-Driven Architecture):**
     *   *Mô tả:* Phân tách độc lập các khối tính toán và giao tiếp gián tiếp qua cơ sở dữ liệu và message queue.
     *   *Áp dụng:* Tách biệt luồng xử lý tương tác trực tiếp với người dùng (Flask) và luồng xử lý hậu trường nặng (Celery). Đồng bộ trạng thái hội thoại và trạng thái tệp tin thông qua SQLite Database (`ai_local_support.db`) và Redis Broker.
 4.  **Application Factory Pattern (Flask):**
     *   *Mô tả:* Tránh việc khai báo ứng dụng Flask trực tiếp toàn cục để ngăn chặn việc import vòng (circular imports).
-    *   *Áp dụng:* Tạo tệp [app_factory.py](file:///Users/nguyenson/Github/ai-local-support/app_factory.py) chứa hàm `create_app()`. Blueprints được đăng ký động bên trong hàm này giúp tách biệt cấu trúc dự án.
+    *   *Áp dụng:* Tạo tệp [app_factory.py](app_factory.py) chứa hàm `create_app()`. Blueprints được đăng ký động bên trong hàm này giúp tách biệt cấu trúc dự án.
 5.  **Repository Pattern (Database Abstraction):**
     *   *Mô tả:* Tách biệt hoàn toàn tầng logic nghiệp vụ với tầng truy cập cơ sở dữ liệu.
-    *   *Áp dụng:* Toàn bộ các câu truy vấn SQLAlchemy/SQLite được đóng gói thành các class trong [repositories.py](file:///Users/nguyenson/Github/ai-local-support/services/repositories.py), giúp Blueprints và Services không cần truy vấn trực tiếp model hoặc gọi `db.session.commit()`.
+    *   *Áp dụng:* Toàn bộ các câu truy vấn SQLAlchemy/SQLite được đóng gói thành các class trong [services/repositories.py](services/repositories.py), giúp Blueprints và Services không cần truy vấn trực tiếp model hoặc gọi `db.session.commit()`.
 6.  **Strategy & Factory Pattern (Document Extraction):**
     *   *Mô tả:* Định nghĩa một họ thuật toán trích xuất tệp, đóng gói từng thuật toán lại và giúp chúng có thể thay thế lẫn nhau.
-    *   *Áp dụng:* Trong [extractor_service.py](file:///Users/nguyenson/Github/ai-local-support/services/extractor_service.py), các class trích xuất kế thừa `BaseExtractor` (PDF, Word, TXT, OCR) và được chọn tự động qua `ExtractorFactory` dựa trên phần mở rộng tệp tin.
+    *   *Áp dụng:* Trong [services/extractor_service.py](services/extractor_service.py), các class trích xuất kế thừa `BaseExtractor` (PDF, Word, TXT, OCR) và được chọn tự động qua `ExtractorFactory` dựa trên phần mở rộng tệp tin.
 7.  **Command Pattern (Agent Tools Registry):**
     *   *Mô tả:* Đóng gói yêu cầu thực thi công cụ thành một đối tượng độc lập, cho phép tham số hóa các yêu cầu.
-    *   *Áp dụng:* Các công cụ của Coding Agent (đọc file, ghi file, quét thư mục...) được định nghĩa thành các class kế thừa `BaseAgentTool` trong [agent_tool_service.py](file:///Users/nguyenson/Github/ai-local-support/services/agent_tool_service.py) và được gọi thống nhất qua `ToolRegistry`.
+    *   *Áp dụng:* Các công cụ của Coding Agent (đọc file, ghi file, quét thư mục...) được định nghĩa thành các class kế thừa `BaseAgentTool` trong [services/agent_tool_service.py](services/agent_tool_service.py) và được gọi thống nhất qua `ToolRegistry`.
 
 ---
 
@@ -75,29 +75,117 @@ graph TD
 
 ## 📦 Các thành phần chính trong Hệ thống
 
-1.  **Flask API Application ([app_factory.py](file:///Users/nguyenson/Github/ai-local-support/app_factory.py)):**
+1.  **Flask API Application ([app_factory.py](app_factory.py)):**
     *   Được xây dựng theo mẫu **Application Factory**. Khởi tạo Flask Web Server, cấu hình cơ sở dữ liệu, logging, và đăng ký Blueprints một cách động.
     *   Tránh các lỗi import chéo lúc khởi tạo.
-2.  **Celery Workers ([tasks.py](file:///Users/nguyenson/Github/ai-local-support/tasks.py)):**
+2.  **Celery Workers ([tasks.py](tasks.py)):**
     *   Là các luồng xử lý chạy hoàn toàn độc lập với Flask.
     *   Thực hiện các tác vụ nặng: Trích xuất nội dung văn bản thông qua Extractor Service, chạy OCR, tạo chunks văn bản, sinh vector nhúng và nạp vào ChromaDB.
-3.  **Tầng Cấu trúc Dữ liệu & Repository ([repositories.py](file:///Users/nguyenson/Github/ai-local-support/services/repositories.py)):**
+3.  **Tầng Cấu trúc Dữ liệu & Repository ([services/repositories.py](services/repositories.py)):**
     *   Đóng gói toàn bộ các thao tác đọc/ghi cơ sở dữ liệu (SQLite).
     *   Giúp các controller (blueprints) và services độc lập hoàn toàn với việc quản lý SQLAlchemy session và truy vấn SQL thuần.
 4.  **Tầng Nghiệp vụ (Services Layer):**
-    *   [extractor_service.py](file:///Users/nguyenson/Github/ai-local-support/services/extractor_service.py): Trích xuất văn bản độc lập (Strategy & Factory).
-    *   [agent_service.py](file:///Users/nguyenson/Github/ai-local-support/services/agent_service.py): Vận hành ReAct Coding Agent Loop.
-    *   [agent_tool_service.py](file:///Users/nguyenson/Github/ai-local-support/services/agent_tool_service.py): Đóng gói lệnh công cụ (Command Pattern).
-    *   [helper_service.py](file:///Users/nguyenson/Github/ai-local-support/services/helper_service.py): Các helper SSE, chat history, ngôn ngữ.
+    *   [services/extractor_service.py](services/extractor_service.py): Trích xuất văn bản độc lập (Strategy & Factory).
+    *   [services/agent_service.py](services/agent_service.py): Vận hành ReAct Coding Agent Loop.
+    *   [services/agent_tool_service.py](services/agent_tool_service.py): Đóng gói lệnh công cụ (Command Pattern).
+    *   [services/helper_service.py](services/helper_service.py): Các helper SSE, chat history, ngôn ngữ.
 5.  **Redis Message Broker:**
     *   Là trạm trung chuyển tin nhắn trung gian. Flask gửi yêu cầu "xử lý file" vào Redis, Celery Workers liên tục lắng nghe Redis để kéo task về xử lý khi rảnh.
 6.  **SQLite Database (`ai_local_support.db`):**
-    *   Cơ sở dữ liệu lưu trữ quan hệ để lưu giữ thông tin phiên làm việc ([models.py](file:///Users/nguyenson/Github/ai-local-support/services/models.py)) giúp chia sẻ trạng thái chung giữa Flask và Celery.
+    *   Cơ sở dữ liệu lưu trữ quan hệ để lưu giữ thông tin phiên làm việc ([services/models.py](services/models.py)) giúp chia sẻ trạng thái chung giữa Flask và Celery.
 7.  **ChromaDB Vector Database (`./chroma_db`):**
     *   Cơ sở dữ liệu Vector cục bộ dạng nhúng (embedded).
     *   Lưu trữ các đoạn tài liệu được cắt nhỏ kèm Vector 768 chiều được tính toán từ model `nomic-embed-text` của Ollama.
 8.  **Ollama (AI Local Runner):**
     *   Cung cấp API để chạy cục bộ các model LLM (`qwen2.5-coder`, `deepseek-r1`, `qwen2.5-vl`...) và Embedding Model (`nomic-embed-text`).
+
+---
+
+## 📁 Cấu trúc Thư mục Dự án (Project Directory Structure)
+
+Cấu trúc dự án theo mô hình Module hóa giúp dễ bảo trì và mở rộng:
+
+```
+ai-local-support/
+├── app.py                  # Khởi chạy ứng dụng Flask
+├── app_factory.py          # Khởi tạo Flask Web Server (Application Factory) & Đăng ký Blueprints
+├── celery_app.py           # Cấu hình khởi tạo Celery App & Tự động lồng Flask app context
+├── tasks.py                # Định nghĩa các tác vụ Celery chạy ngầm (xử lý file, OCR, RAG Indexing)
+├── config.py               # Các cấu hình tham số hệ thống (model, db path, upload limit...)
+├── requirements.txt        # Danh sách các thư viện Python phụ thuộc
+├── README.md               # Hướng dẫn cài đặt & sử dụng
+├── INSTALLATION.md         # Hướng dẫn cài đặt chi tiết trên macOS & Windows
+├── ARCHITECTURE.md         # Tài liệu giải thích kiến trúc chi tiết của dự án
+├── blueprints/             # Quản lý các API endpoint được phân tách theo module (Controller Layer)
+│   ├── __init__.py
+│   ├── doc.py              # Xử lý API liên quan đến Tài liệu (Upload, Chat RAG, Trạng thái)
+│   ├── project.py          # Xử lý API liên quan đến Dự án (Mở dự án, Upload, File, Chat/Agent)
+│   └── chat.py             # Xử lý API liên quan đến Trò chuyện tự do & Code (Khởi tạo, Chat, Xóa session)
+├── services/               # Lớp xử lý logic nghiệp vụ và dữ liệu (Service & Repository Layers)
+│   ├── __init__.py
+│   ├── database.py         # Khởi tạo instance SQLAlchemy
+│   ├── models.py           # Định nghĩa cấu trúc các bảng Database (SQLite Schema)
+│   ├── repositories.py     # Lớp truy xuất Database SQLite (Repository Pattern)
+│   ├── helper_service.py   # Các hàm tiện ích dùng chung (SSE formatting, language, chat history)
+│   ├── agent_service.py    # Quản lý logic chạy ReAct Agent loop của Coding Agent
+│   ├── agent_tool_service.py # Định nghĩa danh sách các công cụ của Agent (Command Pattern)
+│   ├── extractor_service.py # Xử lý trích xuất văn bản tài liệu (Strategy & Factory Pattern)
+│   ├── document_service.py # Xử lý đọc file PDF, Word, TXT, nén ảnh, chạy Tesseract OCR
+│   ├── ollama_service.py   # Tích hợp và gọi các API kết nối Ollama Local
+│   ├── rag_service.py      # Xử lý nhúng vector và tìm kiếm ngữ cảnh với ChromaDB
+│   └── errors.py           # Định nghĩa các Exception tùy chỉnh của hệ thống
+├── tests/                  # Thư mục kiểm thử tự động
+│   └── test_basic.py       # Bộ kiểm thử hồi quy cơ bản bằng Pytest
+├── templates/              # Thư mục chứa giao diện HTML
+│   └── index.html          # Giao diện chính ứng dụng Single Page
+├── static/                 # Thư mục tài nguyên tĩnh
+│   ├── style.css           # Định nghĩa giao diện tối (Dark theme) hiện đại
+│   └── app.js              # Xử lý logic frontend và streaming kết quả từ API
+├── uploads/                # Thư mục chứa file upload (được tạo tự động)
+└── chroma_db/              # Thư mục lưu trữ database vector ChromaDB (được tạo tự động)
+```
+
+---
+
+## 🔌 API Endpoints
+
+### 1. Document Module (Xử lý Tài liệu)
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/doc/upload` | Tải lên tài liệu/ảnh mới (bắt đầu một session) |
+| GET | `/api/doc/status/<session_id>` | Kiểm tra trạng thái xử lý tài liệu ngầm của Celery |
+| POST | `/api/doc/chat` | Chat/hỏi đáp (RAG/Vision) với tài liệu trong session |
+| POST | `/api/doc/session/<session_id>/clear` | Xóa lịch sử chat trong session nhưng giữ file đã upload |
+
+### 2. Code Module (Phân tích Code)
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/chat/code/analyze` | Gửi code để phân tích ban đầu (bắt đầu một session) |
+| POST | `/api/chat/code/chat` | Chat/hỏi đáp về logic, lỗi, tối ưu hóa của đoạn code trong session |
+| POST | `/api/chat/code/session/<session_id>/clear` | Xóa lịch sử chat về đoạn code trong session |
+
+### 3. Project Module (Agent Workspace)
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/project/init` | Khởi tạo dự án hoặc mở thư mục local |
+| POST | `/api/project/<session_id>/upload` | Tải lên thư mục dự án qua trình duyệt |
+| GET | `/api/project/<session_id>/file` | Đọc nội dung tệp tin trong dự án |
+| POST | `/api/project/<session_id>/write_file` | Ghi đè/tạo mới tệp tin trong dự án |
+| GET | `/api/project/<session_id>/scan` | Quét lại cấu trúc cây thư mục |
+| POST | `/api/project/<session_id>/chat` | Gửi yêu cầu lập trình tới AI Coding Agent (ReAct) |
+
+### 4. Chat Module (Trò chuyện Tự do)
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/chat/init` | Khởi tạo một phiên trò chuyện tự do mới |
+| POST | `/api/chat/chat` | Trò chuyện tự do và nhận phản hồi dạng stream từ model |
+| POST | `/api/chat/session/<session_id>/clear` | Xóa lịch sử trò chuyện tự do trong session |
+
+### 5. Common (Dùng chung)
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| GET | `/` | Trả về giao diện WebUI chính |
+| GET | `/api/models` | Lấy danh sách các model Ollama đã tải về ở máy local |
 
 ---
 
@@ -138,7 +226,7 @@ graph TD
 
 ## 💾 Cấu trúc Cơ sở dữ liệu (SQLite Schema)
 
-Hệ thống sử dụng SQLAlchemy để định nghĩa 3 bảng trong SQLite ([models.py](file:///Users/nguyenson/Github/ai-local-support/services/models.py)):
+Hệ thống sử dụng SQLAlchemy để định nghĩa 3 bảng trong SQLite ([services/models.py](services/models.py)):
 
 ### 1. Bảng `document_sessions`
 Lưu trữ trạng thái và cấu hình của các tệp tài liệu được upload:
@@ -213,12 +301,21 @@ sequenceDiagram
 
 1.  **Chống Path Traversal (Path Traversal Protection):**
     *   Hệ thống triển khai hàm `safe_join_project_path` kiểm tra và phân giải đường dẫn tương đối dựa trên đường dẫn tuyệt đối của thư mục làm việc.
-    *   Mọi tệp tin trước khi đọc/ghi bởi Agent hoặc Client đều phải đi qua kiểm tra tiền tố đường dẫn, nếu Agent cố gắng truy cập ra ngoài phạm vi thư mục được cấu hình (ví dụ: bằng cách sử dụng `..` hoặc đường dẫn tuyệt đối khác hệ thống), hệ thống sẽ từ chối thực thi và trả về thông báo lỗi an toàn.
+    *   Mọi tệp tin trước khi đọc/ghi bởi Agent hoặc Client đều phải đi qua kiểm tra tiền tố đường dẫn, nếu Agent cố gắng truy cập ra ngoài phạm vi thư mục được cấu hình, hệ thống sẽ từ chối thực thi và trả về thông báo lỗi an toàn.
 2.  **Bộ nhớ Cache danh sách Models (TTL Caching):**
     *   REST API tags của Ollama được lưu trong bộ nhớ cache TTL với vòng đời 60 giây.
     *   Giúp giảm thiểu tối đa các kết nối HTTP dư thừa đến Ollama runner cục bộ, tăng tốc độ phản hồi danh sách models khi chuyển đổi giao diện hoặc tải lại trang.
 3.  **Hệ thống Logging đồng bộ (Unified Logging):**
-    *   Được cấu hình tập trung tại `app_factory.py` sử dụng thư viện `logging` tiêu chuẩn của Python.
+    *   Được cấu hình tập trung tại [app_factory.py](app_factory.py) sử dụng thư viện `logging` tiêu chuẩn của Python.
     *   Logs có định dạng thống nhất bao gồm timestamp rõ ràng, cấp độ ghi log (INFO/ERROR), tên tệp tin và số dòng phát sinh, giúp dễ dàng debug chẩn đoán lỗi trong cả Flask và Celery.
-
-
+4.  **Tối ưu hóa kết nối Ollama trên macOS (DNS Localhost Resolution):**
+    *   Mặc định sử dụng IP `127.0.0.1` thay vì `localhost` để tránh cơ chế phân giải DNS bị trễ (delay ~1.0 giây mỗi request) do lỗi thử nghiệm IPv6 trên môi trường macOS. Điều này tăng tốc độ giao tiếp API giữa Flask/Celery và Ollama lên gấp nhiều lần.
+5.  **Sinh Embeddings theo lô (Batch Embedding Processing):**
+    *   Trong quá trình trích xuất RAG, hệ thống thay thế việc sinh embeddings tuần tự từng chunk (qua endpoint `/api/embeddings` cũ) bằng việc sinh theo từng nhóm (batch 32 chunks) thông qua endpoint `/api/embed` của Ollama.
+    *   Điều này giúp tận dụng khả năng xử lý đa luồng/song song của GPU/CPU cục bộ và giảm thiểu số lượng kết nối mạng nội bộ.
+6.  **Tái sử dụng kết nối HTTP (Connection Pooling):**
+    *   Các lệnh gọi tới API của Ollama sử dụng đối tượng `requests.Session()` dùng chung giúp duy trì kết nối persistent Keep-Alive, loại bỏ chi phí thiết lập TCP handshake lặp lại.
+7.  **Giới hạn độ sâu quét Workspace (Directory Scan Depth Limiting):**
+    *   Hàm quét thư mục dự án khi mở workspace được thiết lập giới hạn độ sâu mặc định (`max_depth=2`) thay vì đệ quy vô hạn, tránh gây nghẽn/treo tiến trình Flask chính đối với các thư mục chứa hàng ngàn tệp tin. Cây thư mục sâu hơn sẽ được tải động (lazy load).
+8.  **Hỗ trợ ghi song song với SQLite WAL Mode:**
+    *   SQLite được cấu hình tự động ở chế độ ghi nhật ký trước **WAL (Write-Ahead Logging)** và chế độ đồng bộ **NORMAL** thông qua SQLAlchemy. Cho phép luồng xử lý chính (Flask) và luồng xử lý ngầm (Celery background worker) đọc/ghi cơ sở dữ liệu đồng thời mà không gặp lỗi lock cơ sở dữ liệu (`database is locked`).

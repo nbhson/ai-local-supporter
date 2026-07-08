@@ -1,5 +1,6 @@
 from datetime import datetime
 from services.database import db
+from sqlalchemy.orm import deferred
 
 class DocumentSession(db.Model):
     __tablename__ = 'document_sessions'
@@ -12,8 +13,8 @@ class DocumentSession(db.Model):
     language = db.Column(db.String(10), default='en')
     model = db.Column(db.String(100), nullable=False)
     file_type = db.Column(db.String(20), nullable=False)      # 'document', 'image'
-    base64_image = db.Column(db.Text, nullable=True)          # Stored for vision model
-    extracted_text = db.Column(db.Text, nullable=True)        # Backup/preview text
+    base64_image = deferred(db.Column(db.Text, nullable=True))          # Stored for vision model
+    extracted_text = deferred(db.Column(db.Text, nullable=True))        # Backup/preview text
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -27,8 +28,8 @@ class DocumentFile(db.Model):
     filename = db.Column(db.String(255), nullable=False)
     filepath = db.Column(db.String(512), nullable=False)
     file_type = db.Column(db.String(20), nullable=False)      # 'document', 'image'
-    base64_image = db.Column(db.Text, nullable=True)          # Stored for vision model
-    extracted_text = db.Column(db.Text, nullable=True)        # Backup/preview text
+    base64_image = deferred(db.Column(db.Text, nullable=True))          # Stored for vision model
+    extracted_text = deferred(db.Column(db.Text, nullable=True))        # Backup/preview text
     status = db.Column(db.String(50), default='processing')    # 'processing', 'ready', 'failed'
     error_message = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

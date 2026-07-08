@@ -1,6 +1,6 @@
 # Hướng dẫn Cài đặt & Cấu hình (macOS & Windows)
 
-Tài liệu này hướng dẫn chi tiết cách cài đặt các thành phần phụ thuộc và khởi chạy ứng dụng **AI Local Support** trên hệ điều hành **macOS** và **Windows**.
+Tài liệu này hướng dẫn chi tiết cách cài đặt các thành phần phụ thuộc, cấu hình và khởi chạy ứng dụng **AI Local Support** trên hệ điều hành **macOS** và **Windows**, cũng như cách khắc phục các sự cố thường gặp.
 
 ---
 
@@ -20,7 +20,7 @@ Trước khi bắt đầu, hãy đảm bảo hệ thống của bạn đã cài 
 Mở Terminal và chạy các lệnh sau:
 ```bash
 # Di chuyển vào thư mục dự án
-cd ai-local-supporter
+cd ai-local-support
 
 # Khởi tạo môi trường ảo Python
 python3 -m venv .venv
@@ -69,7 +69,12 @@ Mở **2 tab Terminal** song song (cả 2 đều cần kích hoạt `.venv` trư
   source .venv/bin/activate
   python3 app.py
   ```
-
+- **Terminal 3 (Redis Server):**
+  ```bash
+  source .venv/bin/activate
+  redis-cli monitor
+  ```
+  
 Mở trình duyệt truy cập: **http://127.0.0.1:5001**
 
 ---
@@ -80,7 +85,7 @@ Mở trình duyệt truy cập: **http://127.0.0.1:5001**
 Mở **PowerShell** hoặc **Command Prompt (CMD)** dưới quyền Admin và di chuyển vào thư mục dự án:
 ```powershell
 # Di chuyển vào thư mục dự án
-cd ai-local-supporter
+cd ai-local-support
 
 # Khởi tạo môi trường ảo Python
 python -m venv .venv
@@ -136,11 +141,11 @@ Có hai cách thiết lập Redis trên Windows:
        ```
        Lưu file lại (`Ctrl+O` -> `Enter` -> `Ctrl+X`).
        
-    3. Khởi động lại dịch vụ Redis trong WSL:
+     3. Khởi động lại dịch vụ Redis trong WSL:
        ```bash
        sudo service redis-server restart
        ```
-    4. Để chạy Redis tự động sau này mà không cần đăng nhập Ubuntu, bạn có thể khởi động nhanh từ Windows CMD/PowerShell bằng lệnh:
+     4. Để chạy Redis tự động sau này mà không cần đăng nhập Ubuntu, bạn có thể khởi động nhanh từ Windows CMD/PowerShell bằng lệnh:
        ```powershell
        wsl -d Ubuntu redis-server --daemonize yes
        ```
@@ -168,14 +173,28 @@ Mở trình duyệt truy cập: **http://127.0.0.1:5001**
 
 ---
 
+## ⚙️ Cấu hình (Tùy chọn)
+
+Bạn có thể thay đổi các cấu hình như Model mặc định, URL cổng kết nối, Redis Broker URL bằng cách truyền các biến môi trường hoặc sửa trực tiếp trong file [config.py](config.py):
+
+| Biến môi trường | Ý nghĩa | Giá trị mặc định |
+|---|---|---|
+| `OLLAMA_URL` | URL kết nối tới Ollama | `http://localhost:11434/api` |
+| `DEFAULT_MODEL` | Model LLM mặc định phân tích và chat | `qwen2.5-coder:14b` |
+| `EMBEDDING_MODEL` | Model nhúng vector cho cơ sở dữ liệu RAG | `nomic-embed-text` |
+| `DATABASE_URL` | URI kết nối cơ sở dữ liệu SQLite | `sqlite:///ai_local_support.db` |
+| `CELERY_BROKER_URL` | URL của Redis Broker dành cho Celery | `redis://localhost:6379/0` |
+
+---
+
 ## 🛠 Hướng dẫn Khắc phục sự cố (Troubleshooting)
 
-### 1. Celery báo lỗi: `Error 10061 connecting to 127.0.0.1:6379`
+### 1. Celery báo lỗi: `Error 10061 connecting to 127.0.0.1:6379` hoặc `ConnectionRefusedError`
 - **Nguyên nhân**: Redis chưa được khởi chạy hoặc cổng mạng bị chặn.
 - **Giải pháp**:
   - Đảm bảo Redis service đang chạy (`wsl redis-cli ping` trả về `PONG` hoặc `docker ps` hiển thị container đang chạy).
   - Nếu sử dụng WSL 2, hãy kiểm tra lại file `/etc/redis/redis.conf` đã đổi thành `protected-mode no` chưa và restart lại dịch vụ. 
-  - File cấu hình [config.py](file:///d:/github/ai-local-supporter/config.py) mặc định tự động dò tìm IP ảo của WSL (`172.20.xxx.xxx`) và kết nối trực tiếp đến nó nếu loopback `127.0.0.1` bị Windows Firewall chặn.
+  - File cấu hình [config.py](config.py) mặc định tự động dò tìm IP ảo của WSL (`172.20.xxx.xxx`) và kết nối trực tiếp đến nó nếu loopback `127.0.0.1` bị Windows Firewall chặn.
 
 ### 2. Gặp lỗi build `chroma-hnswlib` khi cài đặt thư viện
 - **Nguyên nhân**: Thiếu Microsoft Visual C++ compiler trên Windows.
@@ -201,3 +220,66 @@ Mở trình duyệt truy cập: **http://127.0.0.1:5001**
      ```powershell
      wsl --shutdown
      ```
+
+### 5. AI phản hồi chậm khi chạy ứng dụng Web so với Commandline / Trễ phân giải kết nối / Tràn VRAM (Model Thrashing)
+- **Nguyên nhân**:
+  1. **Lỗi phân giải tên miền (macOS):** Python khi gửi request tới URL dạng `http://localhost:11434` sẽ bị trễ ~1.0 giây mỗi lần kết nối do cơ chế tìm kiếm IPv6. Với các luồng lặp của Agent (3-5 lần gọi API), độ trễ này cộng dồn làm ứng dụng rất chậm.
+  2. **Tranh chấp bộ nhớ VRAM (Model Thrashing):** Khi sử dụng chức năng "Chat tài liệu" (RAG), hệ thống phải sử dụng cả Embedding model (`nomic-embed-text`) và Chat model. Nếu VRAM của card đồ họa (hoặc RAM trên máy Mac) bị đầy, Ollama sẽ liên tục dỡ model chat ra ngoài để nạp model embedding vào, rồi sau đó lại làm ngược lại. Quá trình swap này mất từ 5-20 giây mỗi lượt chat.
+- **Giải pháp**:
+  - **Khắc phục lỗi trễ kết nối:** Đảm bảo cấu hình biến `OLLAMA_URL` kết nối tới địa chỉ IP trực tiếp `http://127.0.0.1:11434/api` thay vì dùng chữ `localhost`.
+  - **Khuyến nghị lựa chọn kích thước Model dựa trên cấu hình RAM/VRAM máy tính:**
+    - **Máy tính cấu hình thấp (RAM/VRAM < 16GB):** Ưu tiên sử dụng mô hình chat nhỏ gọn, hiệu quả cao như `qwen2.5-coder:7b`, `llama3:8b`, hoặc `deepseek-r1:8b`. Tránh dùng các bản 14B trở lên để không bị hiện tượng tràn VRAM swap sang ổ đĩa.
+    - **Máy tính cấu hình tốt (RAM/VRAM >= 16GB trở lên hoặc Apple Silicon Mac M1/M2/M3 với Unified Memory lớn):** Có thể chạy mượt mà mô hình `qwen2.5-coder:14b` hoặc `deepseek-r1:14b` mặc định.
+
+### 6. Tài liệu cứ hiển thị "Đang phân tích..." (processing) mãi không đổi trạng thái?
+- **Giải pháp**:
+  - Đảm bảo bạn đã khởi chạy Redis Server thành công (`docker ps` hoặc `brew services list`).
+  - Kiểm tra kết nối tới Redis bằng cách chạy lệnh: `redis-cli ping` (phản hồi `PONG` là hoạt động tốt).
+  - Bạn có thể xem các task đang chuyển tải qua Redis theo thời gian thực bằng lệnh: `redis-cli monitor`.
+  - Đảm bảo bạn đã khởi chạy Celery worker bằng lệnh: `celery -A tasks.celery worker --loglevel=info` trong môi trường ảo `.venv` đã kích hoạt.
+  - Kiểm tra log của Celery worker để xem có lỗi gì khi import thư viện hoặc lỗi kết nối Redis/Ollama không.
+
+### 7. Port 5001 đã được sử dụng?
+- **Giải pháp**: Kiểm tra và giải phóng cổng 5001 (thường bị chiếm bởi dịch vụ AirPlay Receiver trên macOS):
+  ```bash
+  # Kiểm tra process đang dùng port
+  lsof -i :5001
+
+  # Kill process đang chiếm dụng port
+  kill -9 <PID>
+  ```
+
+### 8. Ollama không kết nối được hoặc cần khởi động lại?
+- **Giải pháp**:
+  - Kiểm tra dịch vụ Ollama có phản hồi danh sách model không:
+    ```bash
+    ollama list
+    ```
+  - Tắt hoàn toàn dịch vụ/tiến trình Ollama nếu bị treo:
+    ```bash
+    pkill ollama
+    ```
+  - Khởi động lại ứng dụng Ollama Desktop hoặc chạy lệnh sau để khởi động service:
+    ```bash
+    ollama serve
+    ```
+
+### 9. OCR không hoạt động khi upload ảnh với model thường?
+- **Giải pháp**: Đảm bảo bạn đã cài đặt thư viện hệ thống Tesseract OCR:
+  - **macOS:** `brew install tesseract tesseract-lang` (cần cài bản `-lang` để hỗ trợ tiếng Việt)
+  - **Ubuntu:** `sudo apt-get install tesseract-ocr tesseract-ocr-vie`
+  - **Windows:** Tải file cài đặt (installer `.exe`) từ [UB Mannheim Tesseract Wiki](https://github.com/UB-Mannheim/tesseract/wiki). Trong quá trình cài đặt, chọn tải thêm gói ngôn ngữ **Vietnamese** (tiếng Việt). Sau khi cài đặt hoàn tất, bạn cần thêm đường dẫn của thư mục cài đặt (mặc định là `C:\Program Files\Tesseract-OCR`) vào biến môi trường hệ thống **PATH** và khởi động lại terminal.
+  - Kiểm tra xem Tesseract đã hoạt động trong Terminal:
+    ```bash
+    # Kiểm tra phiên bản
+    tesseract --version
+
+    # Kiểm tra các ngôn ngữ OCR được hỗ trợ (cần thấy 'vie' và 'eng')
+    tesseract --list-langs
+    ```
+
+### 10. Vision model không nhận diện được ảnh?
+- **Giải pháp**:
+  - Đảm bảo model bạn chọn nằm trong tập hợp các vision model hỗ trợ (ví dụ: `qwen2.5-vl`, `llava`, `moondream`).
+  - Kiểm tra xem GPU của máy có bị quá tải VRAM dẫn đến model bị tắt (killed) giữa chừng không.
+  - Thử chuyển sang dùng model không phải vision (như `qwen2.5-coder`) để kích hoạt tính năng **OCR fallback** sử dụng Tesseract.
