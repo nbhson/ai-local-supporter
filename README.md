@@ -8,8 +8,8 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 
 - 🚀 **[Hướng dẫn Cài đặt & Khắc phục sự cố](INSTALLATION.md)**: Chi tiết cách cài đặt các thành phần phụ thuộc, tải model Ollama, thiết lập Redis và giải quyết các lỗi thường gặp trên macOS và Windows.
 - 📐 **[Tài liệu Kiến trúc Hệ thống](ARCHITECTURE.md)**: Giải thích chi tiết về sơ đồ kiến trúc, các design pattern áp dụng, cấu trúc thư mục dự án, cấu trúc cơ sở dữ liệu và các API endpoints của hệ thống.
+- 🤖 **[Đặc tả kỹ năng AI Engineering](AI_ENGINEERING.md)**: Bảng đối chiếu và giải thích chi tiết cách áp dụng 15 kỹ năng/kỹ thuật AI Engineering vào cấu trúc mã nguồn của hệ thống.
 - ⚡ **[So sánh hiệu năng: CLI vs. App](OLLAMA_CLI_VS_APP.md)**: Giải thích tại sao chạy Ollama qua dòng lệnh nhanh hơn qua giao diện App/Web và cách tối ưu hóa.
-
 
 ---
 
