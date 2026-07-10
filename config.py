@@ -28,14 +28,34 @@ FASTEMBED_MODEL = os.environ.get("FASTEMBED_MODEL", "nomic-ai/nomic-embed-text-v
 AGENT_MAX_ITERATIONS = 10
 AGENT_MAX_DEPTH = 2
 AGENT_MAX_ENTRIES_PER_DIR = 30
-RAG_TOP_K = 4
+AGENT_TREE_CACHE_TTL = 300  # 5 minutes
+
+# RAG Configuration
+RAG_TOP_K = 6               # Increased from 4 for better hybrid retrieval
 RAG_CHUNK_SIZE = 1000
 RAG_CHUNK_OVERLAP = 200
+RAG_HYBRID_VECTOR_WEIGHT = 0.6  # Weight for vector similarity in hybrid search
+RAG_HYBRID_KEYWORD_WEIGHT = 0.4  # Weight for keyword matching in hybrid search
+
+# Tool Configuration
+TOOL_READ_TIMEOUT = 30      # seconds
+TOOL_WRITE_TIMEOUT = 30     # seconds
+TOOL_COMMAND_TIMEOUT = 30   # seconds for RUN_COMMAND
+TOOL_TEST_TIMEOUT = 60      # seconds for RUN_TESTS
+TOOL_LINT_TIMEOUT = 60      # seconds for LINT_CODE
+TOOL_GIT_TIMEOUT = 15       # seconds for GIT commands
+
+# Image Processing
 IMAGE_COMPRESS_MAX_SIZE = (1024, 1024)
 IMAGE_COMPRESS_QUALITY = 85
+
+# Session & Cleanup
 CLEANUP_EXPIRE_SECONDS = 24 * 3600  # 1 day
+
+# Chat History
 CHAT_HISTORY_LIMIT = 10
 PROJECT_HISTORY_LIMIT = 8
+CHAT_HISTORY_SUMMARY_THRESHOLD = 6  # Summarize when history exceeds this
 MAX_TEXT_CHARS = 15000
 
 EXCLUDE_DIRS = {

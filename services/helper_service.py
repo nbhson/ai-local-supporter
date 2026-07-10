@@ -14,8 +14,43 @@ def format_sse_event(event_type, **kwargs):
     padding = ":" + " " * 512 + "\n"
     return f"data: {payload}\n\n{padding}"
 
+def _summarize_old_messages(messages):
+    """Summarize older messages into a compact representation to save context window.
+    
+    Keeps the last 3 messages in full, and summarizes everything before that
+    into a brief summary.
+    """
+    if len(messages) <= 4:
+        return messages
+    
+    older = messages[:-3]
+    recent = messages[-3:]
+    
+    # Build a compact summary of older messages
+    summary_parts = []
+    for msg in older:
+        role = "User" if msg['role'] == 'user' else "Assistant"
+        content = msg['content']
+        # Truncate each old message to first 150 chars
+        if len(content) > 150:
+            content = content[:150] + "..."
+        summary_parts.append(f"{role}: {content}")
+    
+    summary_text = "[Earlier conversation summary]\n" + "\n".join(summary_parts)
+    
+    # Prepend summary as a system-context message
+    summarized = [{"role": "user", "content": f"[System: The following is a summary of earlier messages in this conversation]\n{summary_text}"},
+                  {"role": "assistant", "content": "Understood, I have the context of our earlier conversation."}]
+    summarized.extend(recent)
+    return summarized
+
+
 def retrieve_chat_history(session_id, limit, skip_first=False):
-    """Retrieve the last N chat messages for a session."""
+    """Retrieve the last N chat messages for a session.
+    
+    When history exceeds 6 messages, older messages are summarized
+    to save context window space while preserving important context.
+    """
     if skip_first:
         first_msg = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).first()
         if not first_msg:
@@ -27,8 +62,14 @@ def retrieve_chat_history(session_id, limit, skip_first=False):
         recent = [msg for msg in recent if msg.id != first_id][-limit:]
     else:
         recent = ChatMessageRepository.get_messages_by_session_id(session_id, limit=limit)
-        
-    return [{"role": msg.role, "content": msg.content} for msg in recent]
+    
+    messages = [{"role": msg.role, "content": msg.content} for msg in recent]
+    
+    # Apply summarization for longer histories to save context window
+    if len(messages) > 6:
+        messages = _summarize_old_messages(messages)
+    
+    return messages
 
 def save_chat_message(session_id, role, content):
     """Helper to save a message in the database."""
