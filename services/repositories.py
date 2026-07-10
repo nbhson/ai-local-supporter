@@ -13,6 +13,14 @@ class DocumentSessionRepository:
         return session
 
     @staticmethod
+    def save_all(*instances):
+        """Add multiple instances to the session and commit once (reduces N+1 commits)."""
+        for inst in instances:
+            db.session.add(inst)
+        db.session.commit()
+        return instances
+
+    @staticmethod
     def get_files_by_session_id(session_id):
         return DocumentFile.query.filter_by(session_id=session_id).all()
 
@@ -60,6 +68,12 @@ class ChatMessageRepository:
             messages.reverse()
             return messages
         return ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).all()
+
+    @staticmethod
+    def get_first_assistant_message(session_id):
+        """Fetch only the first assistant message for a session (avoids loading all messages)."""
+        return ChatMessage.query.filter_by(session_id=session_id, role='assistant')\
+            .order_by(ChatMessage.created_at.asc()).first()
 
     @staticmethod
     def save(message):

@@ -43,9 +43,11 @@ async function handleFileUploads(files) {
         const sessionId = uploadData.session_id;
         state.doc.sessionId = sessionId;
 
-        // Start polling document processing status
+        // Start polling document processing status with exponential backoff
         let attempts = 0;
-        const maxAttempts = 180; // 6 minutes timeout for 3 files
+        const maxAttempts = 120; // Timeout guard
+        let pollInterval = 1000; // Start at 1s
+        const maxPollInterval = 5000; // Cap at 5s
 
         while (attempts < maxAttempts) {
             const statusRes = await fetch(`/api/doc/status/${sessionId}`);
@@ -84,7 +86,8 @@ async function handleFileUploads(files) {
                 ? `Đang phân tích ${files.length} tài liệu với AI (${pct}%)...`
                 : `Analyzing ${files.length} documents with AI (${pct}%)...`;
 
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            pollInterval = Math.min(pollInterval * 1.3, maxPollInterval);
         }
 
         throw new Error(state.language === 'vi' ? 'Thời gian chờ xử lý file quá lâu.' : 'File processing timed out.');

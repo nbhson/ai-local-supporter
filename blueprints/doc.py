@@ -2,6 +2,7 @@ import os
 import uuid
 import base64
 import logging
+import time
 import threading
 import json
 from flask import Blueprint, request, jsonify, Response, current_app, send_from_directory
@@ -21,11 +22,20 @@ from tasks import process_document_task
 
 doc_bp = Blueprint('doc', __name__)
 
+# Throttle cleanup_old_uploads to run at most once per 5 minutes
+_last_cleanup_time = 0
+_cleanup_lock = threading.Lock()
+
 @doc_bp.route('/upload', methods=['POST'])
 def upload_document():
-    # Run cleanup in background
+    # Run cleanup in background (throttled to max once every 5 minutes)
+    global _last_cleanup_time
     upload_dir = current_app.config['UPLOAD_FOLDER']
-    threading.Thread(target=cleanup_old_uploads, args=(upload_dir,), daemon=True).start()
+    with _cleanup_lock:
+        now = time.time()
+        if now - _last_cleanup_time > 300:
+            _last_cleanup_time = now
+            threading.Thread(target=cleanup_old_uploads, args=(upload_dir,), daemon=True).start()
     
     # Support both list of files and single file
     uploaded_files = []
@@ -85,18 +95,20 @@ def upload_document():
         model=model,
         file_type="image" if any(f["file_type"] == "image" for f in saved_files) else "document"
     )
-    DocumentSessionRepository.save(session)
 
     # Create individual DocumentFile records
+    doc_files = []
     for f in saved_files:
-        doc_file = DocumentFile(
+        doc_files.append(DocumentFile(
             session_id=session_id,
             filename=f["filename"],
             filepath=f["filepath"],
             file_type=f["file_type"],
             status='processing'
-        )
-        DocumentSessionRepository.save_file(doc_file)
+        ))
+
+    # Single commit for session + all files (reduces N+1 DB commits)
+    DocumentSessionRepository.save_all(session, *doc_files)
 
     # Trigger Celery background task with only session_id
     process_document_task.delay(session_id, language, model)
@@ -123,12 +135,11 @@ def get_session_status(session_id):
     } for f in files]
 
     if session.status == 'ready':
-        # Get greeting message from DB
+        # Get greeting message from DB (optimized: fetch only the first assistant message)
         greeting = ""
-        messages = ChatMessageRepository.get_messages_by_session_id(session_id)
-        assistant_msgs = [msg for msg in messages if msg.role == 'assistant']
-        if assistant_msgs:
-            greeting = assistant_msgs[0].content
+        first_assistant = ChatMessageRepository.get_first_assistant_message(session_id)
+        if first_assistant:
+            greeting = first_assistant.content
         return jsonify({
             "status": "ready",
             "session_id": session_id,

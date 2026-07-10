@@ -10,15 +10,19 @@ from services.models import ChatMessage
 from services.ollama_service import call_ollama
 from services.helper_service import get_lang_instruction, format_sse_event, retrieve_chat_history, save_chat_message
 
-# In-memory cache for project tree
+# In-memory cache for project tree with TTL (prevents unbounded memory growth)
 # Format: session_id -> {"tree": tree, "stats": stats, "timestamp": float}
 _project_tree_cache = {}
+_PROJECT_TREE_CACHE_TTL = 300  # 5 minutes
 
 def get_cached_project_tree(session_id):
-    """Retrieve the cached project tree and stats for a session."""
+    """Retrieve the cached project tree and stats for a session (with TTL expiry)."""
     cache_entry = _project_tree_cache.get(session_id)
     if cache_entry:
-        return cache_entry["tree"], cache_entry["stats"]
+        if time.time() - cache_entry["timestamp"] < _PROJECT_TREE_CACHE_TTL:
+            return cache_entry["tree"], cache_entry["stats"]
+        # Expired — evict
+        del _project_tree_cache[session_id]
     return None, None
 
 def set_cached_project_tree(session_id, tree, stats):
@@ -31,8 +35,7 @@ def set_cached_project_tree(session_id, tree, stats):
 
 def invalidate_project_tree_cache(session_id):
     """Invalidate/delete the cached project tree for a session."""
-    if session_id in _project_tree_cache:
-        del _project_tree_cache[session_id]
+    _project_tree_cache.pop(session_id, None)
 
 def scan_directory_and_stats(current_path, base_path, stats=None, current_depth=0, max_depth=None):
     if stats is None:

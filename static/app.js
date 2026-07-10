@@ -334,10 +334,28 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
     const decoder = new TextDecoder("utf-8");
     let fullText = "";
     let buffer = "";
+    let pendingUpdate = false;
+
+    // Batch DOM updates with requestAnimationFrame to avoid layout thrashing
+    function scheduleDOMUpdate(container, wasAtBottom) {
+        if (pendingUpdate) return; // already scheduled
+        pendingUpdate = true;
+        requestAnimationFrame(() => {
+            messageBubbleElement.innerHTML = formatMessage(prefixText + fullText);
+            if (container && wasAtBottom) {
+                container.scrollTop = container.scrollHeight;
+            }
+            pendingUpdate = false;
+        });
+    }
 
     while (true) {
         const { value, done } = await reader.read();
         if (done) {
+            // Final flush
+            if (!pendingUpdate) {
+                messageBubbleElement.innerHTML = formatMessage(prefixText + fullText);
+            }
             if (typeof Prism !== 'undefined') {
                 messageBubbleElement.querySelectorAll('pre code').forEach(el => {
                     Prism.highlightElement(el);
@@ -366,9 +384,10 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
                     const data = JSON.parse(dataStr);
                     if (data.content) {
                         fullText += data.content;
-                        messageBubbleElement.innerHTML = formatMessage(prefixText + fullText);
+                        scheduleDOMUpdate(container, wasAtBottom);
                     } else if (data.error) {
-                        messageBubbleElement.innerHTML = formatMessage(`❌ **Lỗi:** ${data.error}`);
+                        fullText += `\n❌ **Lỗi:** ${data.error}`;
+                        scheduleDOMUpdate(container, wasAtBottom);
                     }
                 } catch (e) {
                     // Ignore parsing errors for partial or malformed lines
@@ -376,15 +395,22 @@ async function readStream(response, messageBubbleElement, prefixText = "") {
             }
         }
 
-        if (container && wasAtBottom) {
+        // Fallback for non-batched environments
+        if (!pendingUpdate && container && wasAtBottom) {
             container.scrollTop = container.scrollHeight;
         }
     }
 }
 
+let _autoResizeRafId = null;
 function autoResizeTextarea() {
-    chatInput.style.height = 'auto';
-    chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+    // Debounce with requestAnimationFrame to avoid layout thrashing on rapid input
+    if (_autoResizeRafId) cancelAnimationFrame(_autoResizeRafId);
+    _autoResizeRafId = requestAnimationFrame(() => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+        _autoResizeRafId = null;
+    });
 }
 
 function showToast(icon, message) {

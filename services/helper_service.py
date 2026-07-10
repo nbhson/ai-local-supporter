@@ -9,7 +9,9 @@ def get_lang_instruction(language):
 
 def format_sse_event(event_type, **kwargs):
     payload = json.dumps({'type': event_type, **kwargs})
-    padding = ":" + " " * 1024 + "\n"
+    # Reduced padding from 1024 to 512 bytes — still sufficient to force
+    # proxy/buffer flushes while halving per-event network overhead.
+    padding = ":" + " " * 512 + "\n"
     return f"data: {payload}\n\n{padding}"
 
 def retrieve_chat_history(session_id, limit, skip_first=False):

@@ -9,7 +9,7 @@ from services.document_service import (
 from services.rag_service import index_document
 from services.database import db
 from services.models import DocumentSession, DocumentFile, ChatMessage
-from services.ollama_service import is_vision_model, is_vision_model
+from services.ollama_service import is_vision_model
 
 def _process_single_file(doc_file, model, is_vision):
     """Processes a single document or image file and returns (extracted_text, base64_image, error)."""
