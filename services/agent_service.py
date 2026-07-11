@@ -135,10 +135,11 @@ def parse_all_tool_calls(text):
     Parses all tool calls from the assistant response text.
     Returns a list of dicts: [{'tool': tool_name, 'args': tool_args}]
     """
-    if '[FINISH]' in text:
-        return [{'tool': 'FINISH', 'args': {}}]
-        
     tool_calls = []
+
+    # Parse [FINISH] if present (should not short-circuit other tool calls)
+    if '[FINISH]' in text:
+        tool_calls.append({'tool': 'FINISH', 'args': {}})
     
     # Match simple tool tags: [TOOL: value]
     simple_pattern = r'\[(READ_FILE|LIST_DIR|SEARCH_FILES|RUN_COMMAND|GIT_DIFF|GIT_LOG|LINT_CODE):\s*([^\]\n]+)\]'
@@ -206,7 +207,7 @@ def parse_all_tool_calls(text):
     # Match [WRITE_FILE: path]
     wf_pattern = r'\[(WRITE_FILE):\s*([^\]\n]+)\]'
     wf_matches = list(re.finditer(wf_pattern, text))
-    for idx, match in enumerate(wf_matches):
+    for match in wf_matches:
         file_path = match.group(2).strip()
         start_pos = match.end()
         # Find next tool tag
@@ -423,15 +424,20 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
                 yield format_sse_event('agent_status', status='Finished (No tool call)' if language == 'en' else 'Hoàn thành (Không có tool call)')
                 break
 
-            # Check for FINISH
+            # Check for FINISH (may appear alongside other tool calls)
             has_finish = any(tc['tool'] == 'FINISH' for tc in tool_calls)
-            if has_finish:
+
+            # Filter out FINISH so we execute all real tools first
+            actionable_calls = [tc for tc in tool_calls if tc['tool'] != 'FINISH']
+
+            if not actionable_calls:
+                # Only FINISH (or empty) — nothing to execute
                 log.success("FINISH detected → exiting agent loop")
                 yield format_sse_event('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
                 break
             
             results_contents = []
-            for idx, tool_call in enumerate(tool_calls):
+            for idx, tool_call in enumerate(actionable_calls):
                 tool_name = tool_call['tool']
                 tool_args = tool_call['args']
                 call_id = f"call_{iteration}_{idx}"
@@ -479,11 +485,17 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
             
             # Combine all results into one user message for the next iteration
             combined_results = "\n\n---\n\n".join(results_contents)
-            log.info("Combining tool results for next iteration", tools_count=len(tool_calls), results_size=len(combined_results))
+            log.info("Combining tool results for next iteration", tools_count=len(actionable_calls), results_size=len(combined_results))
             messages.append({
                 "role": "user",
                 "content": f"Tool execution results:\n\n{combined_results}\n\nPlease proceed to the next step."
             })
+
+            # If FINISH was present alongside other tools, exit after executing them
+            if has_finish:
+                log.success("FINISH detected → exiting agent loop (after executing tools)")
+                yield format_sse_event('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
+                break
 
         # Save final response summary to SQLite
         final_summary = ""
