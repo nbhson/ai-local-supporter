@@ -3,6 +3,7 @@ import json
 import config
 from services.models import ChatMessage
 from services.repositories import ChatMessageRepository
+from services.logger import log
 
 def get_lang_instruction(language):
     return "Respond in English." if language == "en" else "Respond in Vietnamese."
@@ -54,6 +55,7 @@ def retrieve_chat_history(session_id, limit, skip_first=False):
     if skip_first:
         first_msg = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.created_at.asc()).first()
         if not first_msg:
+            log.db_query("ChatMessage", session_id, count=0)
             return []
         first_id = first_msg.id
         
@@ -67,14 +69,19 @@ def retrieve_chat_history(session_id, limit, skip_first=False):
     
     # Apply summarization for longer histories to save context window
     if len(messages) > 6:
+        before_count = len(messages)
         messages = _summarize_old_messages(messages)
+        log.info(f"History summarized: {before_count} → {len(messages)} messages", session=session_id[:8])
     
     return messages
 
 def save_chat_message(session_id, role, content):
     """Helper to save a message in the database."""
+    preview = content[:80].replace("\n", " ") if content else ""
     msg = ChatMessage(session_id=session_id, role=role, content=content)
-    return ChatMessageRepository.save(msg)
+    result = ChatMessageRepository.save(msg)
+    log.db_save("ChatMessage", session_id, extra=f"role={role} │ preview={preview}")
+    return result
 
 def safe_join_project_path(base_path: str, relative_path: str) -> str:
     """Joins base_path and relative_path and verifies that the resulting path is inside base_path."""

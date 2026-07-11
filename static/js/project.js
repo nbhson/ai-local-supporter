@@ -81,6 +81,7 @@ function initProjectWorkspace() {
     });
     initAutocompleteDropdown();
     initResizers();
+    initDiffViewMode();
 }
 
 async function openLocalProject() {
@@ -737,10 +738,26 @@ function diffLines(oldStr, newStr) {
 
 // Markdown parser & Proposed Code block extractor for Project Chat
 let proposedBlocks = [];
+let _pendingAutoApplies = [];
+
+function processPendingAutoApplies() {
+    const items = [..._pendingAutoApplies];
+    _pendingAutoApplies = [];
+    items.forEach(item => {
+        setTimeout(() => {
+            if (item.action === 'create') {
+                createProposedFile(item.index);
+            } else {
+                applyProposedCode(item.index);
+            }
+        }, 150);
+    });
+}
 
 function formatProjectMessage(text) {
     if (!text) return "";
     proposedBlocks = [];
+    _pendingAutoApplies = [];
 
     let formatted = text;
 
@@ -957,50 +974,86 @@ function formatProjectMessage(text) {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
 
+        // Check if agent mode is enabled (auto-apply mode)
+        const agentModeCheckbox = document.getElementById('agentModeCheckbox');
+        const isAgentMode = agentModeCheckbox ? agentModeCheckbox.checked : true;
+        
         let actionHtml = "";
-        if (action === 'create') {
-            actionHtml = `<div class="ai-code-action-bar">
-                <span class="ai-code-tag-title create">
-                    <span class="material-symbols-rounded">add_circle</span> ${state.language === 'vi' ? 'Tạo file:' : 'Create file:'} <code>${targetPath}</code>
-                </span>
-                <button class="btn-code-action btn-apply-direct" onclick="createProposedFile(${blockIndex})">
-                    <span class="material-symbols-rounded">create_new_folder</span> ${state.language === 'vi' ? 'Tạo file' : 'Create'}
-                </button>
-            </div>`;
-        } else {
-            actionHtml = targetPath ? `
-                <div class="ai-code-action-bar">
-                    <span class="ai-code-tag-title modify">
-                        <span class="material-symbols-rounded">edit</span> ${state.language === 'vi' ? 'Sửa file:' : 'Modify file:'} <code>${targetPath.split('/').pop()}</code>
-                    </span>
-                    <div style="display: flex; gap: 6px;">
-                        <button class="btn-code-action" onclick="compareProposedCode(${blockIndex})">
-                            <span class="material-symbols-rounded">compare</span> ${state.language === 'vi' ? 'So sánh' : 'Compare'}
-                        </button>
-                        <button class="btn-code-action btn-apply-direct" onclick="applyProposedCode(${blockIndex})">
-                            <span class="material-symbols-rounded">check</span> ${state.language === 'vi' ? 'Áp dụng' : 'Apply'}
-                        </button>
-                    </div>
-                </div>
-            ` : `
-                <div class="ai-code-action-bar">
-                    <span style="font-size: 0.72rem; color: var(--text-muted); font-style: italic;">
-                        ${state.language === 'vi' ? 'Chưa chọn file áp dụng' : 'No target file selected'}
-                    </span>
-                </div>
-            `;
-        }
+        let htmlBlock = "";
 
-        const htmlBlock = `<div class="code-block-wrapper" style="margin-top: 10px;">
-            ${actionHtml}
-            <div class="code-header">
-                <span>${lang || 'code'}</span>
-                <button class="copy-code-btn" onclick="copyCodeToClipboard(this)" data-code="${escapedCode}" title="Copy Code">
-                    <span class="material-symbols-rounded">content_copy</span>
-                </button>
-            </div>
-            <pre><code class="language-${lang || 'text'}">${escapedCode}</code></pre>
-        </div>`;
+        if (isAgentMode) {
+            // Agent mode: compact summary, no code block, auto-apply
+            const icon = action === 'create' ? 'add_circle' : 'edit';
+            const label = action === 'create'
+                ? (state.language === 'vi' ? 'Tạo file:' : 'Created file:')
+                : (state.language === 'vi' ? 'Sửa file:' : 'Modified:');
+            const pathDisplay = targetPath || '?';
+            const lineCount = code.split('\n').length;
+
+            actionHtml = `<div class="ai-code-action-bar auto-apply">
+                <span class="ai-code-tag-title ${action === 'create' ? 'create' : 'modify'}">
+                    <span class="material-symbols-rounded">${icon}</span> ${label} <code>${pathDisplay}</code>
+                    <span style="color: var(--text-muted); font-weight: 400; font-size: 0.65rem; margin-left: 4px;">${lineCount} lines</span>
+                </span>
+                <span class="material-symbols-rounded" style="font-size: 1rem; color: var(--success);">check_circle</span>
+            </div>`;
+
+            htmlBlock = `<div class="code-block-wrapper agent-compact" style="margin-top: 6px; margin-bottom: 6px;">
+                ${actionHtml}
+            </div>`;
+
+            // Queue auto-apply for after rendering
+            if (action === 'create') {
+                _pendingAutoApplies.push({ action: 'create', index: blockIndex });
+            } else if (targetPath) {
+                _pendingAutoApplies.push({ action: 'modify', index: blockIndex });
+            }
+        } else {
+            // Non-agent mode: full code block with Compare/Apply buttons
+            if (action === 'create') {
+                actionHtml = `<div class="ai-code-action-bar">
+                    <span class="ai-code-tag-title create">
+                        <span class="material-symbols-rounded">add_circle</span> ${state.language === 'vi' ? 'Tạo file:' : 'Create file:'} <code>${targetPath}</code>
+                    </span>
+                    <button class="btn-code-action btn-apply-direct" onclick="createProposedFile(${blockIndex})">
+                        <span class="material-symbols-rounded">create_new_folder</span> ${state.language === 'vi' ? 'Tạo file' : 'Create'}
+                    </button>
+                </div>`;
+            } else {
+                actionHtml = targetPath ? `
+                    <div class="ai-code-action-bar">
+                        <span class="ai-code-tag-title modify">
+                            <span class="material-symbols-rounded">edit</span> ${state.language === 'vi' ? 'Sửa file:' : 'Modify file:'} <code>${targetPath.split('/').pop()}</code>
+                        </span>
+                        <div style="display: flex; gap: 6px;">
+                            <button class="btn-code-action" onclick="compareProposedCode(${blockIndex})">
+                                <span class="material-symbols-rounded">compare</span> ${state.language === 'vi' ? 'So sánh' : 'Compare'}
+                            </button>
+                            <button class="btn-code-action btn-apply-direct" onclick="applyProposedCode(${blockIndex})">
+                                <span class="material-symbols-rounded">check</span> ${state.language === 'vi' ? 'Áp dụng' : 'Apply'}
+                            </button>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="ai-code-action-bar">
+                        <span style="font-size: 0.72rem; color: var(--text-muted); font-style: italic;">
+                            ${state.language === 'vi' ? 'Chưa chọn file áp dụng' : 'No target file selected'}
+                        </span>
+                    </div>
+                `;
+            }
+
+            htmlBlock = `<div class="code-block-wrapper" style="margin-top: 10px;">
+                ${actionHtml}
+                <div class="code-header">
+                    <span>${lang || 'code'}</span>
+                    <button class="copy-code-btn" onclick="copyCodeToClipboard(this)" data-code="${escapedCode}" title="Copy Code">
+                        <span class="material-symbols-rounded">content_copy</span>
+                    </button>
+                </div>
+                <pre><code class="language-${lang || 'text'}">${escapedCode}</code></pre>
+            </div>`;
+        }
 
         placeholders.push({ id: placeholderId, html: htmlBlock });
         return placeholderId;
@@ -1066,25 +1119,7 @@ window.compareProposedCode = async (index) => {
     state.project.diffProposedContent = proposed;
     state.project.diffFilePath = filepath;
 
-    const diffResult = diffLines(original, proposed);
-
-    diffContainerViewport.innerHTML = "";
-    diffResult.forEach(line => {
-        const lineDiv = document.createElement('div');
-        lineDiv.className = `diff-line ${line.type}`;
-
-        const numSpan = document.createElement('span');
-        numSpan.className = 'diff-line-num';
-        numSpan.textContent = line.type === 'added' ? `+` : (line.type === 'removed' ? `-` : line.oldLine);
-
-        const contentSpan = document.createElement('span');
-        contentSpan.className = 'diff-line-content';
-        contentSpan.textContent = line.text;
-
-        lineDiv.appendChild(numSpan);
-        lineDiv.appendChild(contentSpan);
-        diffContainerViewport.appendChild(lineDiv);
-    });
+    renderSideBySideDiff(original, proposed, filepath);
 
     editorActiveView.style.display = 'none';
     projectDashboard.style.display = 'none';
@@ -1184,6 +1219,7 @@ function addProjectChatMessage(role, content) {
     `;
     projectChatMessages.appendChild(msgDiv);
     projectChatMessages.scrollTop = projectChatMessages.scrollHeight;
+    processPendingAutoApplies();
 }
 
 // Send streaming message for Project Workspace Chat
@@ -1213,6 +1249,7 @@ function updateAgentText(bubble, fullText) {
         bubble.insertBefore(textDiv, bubble.firstChild);
     }
     textDiv.innerHTML = formatProjectMessage(cleanToolCallsFromText(fullText));
+    processPendingAutoApplies();
 }
 
 function addAgentTimelineStep(bubble, toolName, args) {
@@ -1756,6 +1793,267 @@ function navigateAutocomplete(direction) {
     const activeItem = items[activeAutocompleteIndex];
     activeItem.classList.add('active');
     activeItem.scrollIntoView({ block: 'nearest' });
+}
+
+// ===== SIDE-BY-SIDE DIFF VIEW =====
+let _diffViewMode = 'split'; // 'split' or 'unified'
+
+function initDiffViewMode() {
+    // Add toggle button to diff control panel
+    const panel = document.querySelector('.diff-control-panel');
+    if (!panel) return;
+
+    // Check if toggle already exists
+    if (panel.querySelector('.diff-mode-toggle')) return;
+
+    const toggle = document.createElement('div');
+    toggle.className = 'diff-mode-toggle';
+    toggle.innerHTML = `
+        <button class="diff-mode-btn active" data-mode="split" title="Side by side view">
+            <span class="material-symbols-rounded" style="font-size: 1rem;">view_column</span> Split
+        </button>
+        <button class="diff-mode-btn" data-mode="unified" title="Unified view">
+            <span class="material-symbols-rounded" style="font-size: 1rem;">view_agenda</span> Unified
+        </button>
+    `;
+    toggle.style.cssText = 'display: flex; gap: 4px;';
+
+    // Insert before the accept/discard buttons
+    const btnGroup = panel.querySelector('div:last-child');
+    if (btnGroup) {
+        panel.insertBefore(toggle, btnGroup);
+    } else {
+        panel.appendChild(toggle);
+    }
+
+    toggle.querySelectorAll('.diff-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            toggle.querySelectorAll('.diff-mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _diffViewMode = btn.dataset.mode;
+
+            // Re-render if we have data
+            if (state.project.diffOriginalContent !== undefined && state.project.diffFilePath) {
+                renderSideBySideDiff(
+                    state.project.diffOriginalContent,
+                    state.project.diffProposedContent,
+                    state.project.diffFilePath
+                );
+            }
+        });
+    });
+}
+
+function renderSideBySideDiff(original, proposed, filepath) {
+    if (_diffViewMode === 'split') {
+        renderSplitDiff(original, proposed, filepath);
+    } else {
+        renderUnifiedDiff(original, proposed, filepath);
+    }
+}
+
+function renderSplitDiff(original, proposed, filepath) {
+    const oldLines = original.split(/\r?\n/);
+    const newLines = proposed.split(/\r?\n/);
+
+    // Use jsdiff to get structured diff
+    let diffParts;
+    if (typeof Diff !== 'undefined') {
+        diffParts = Diff.diffArrays(oldLines, newLines);
+    } else {
+        // Simple fallback: treat as separate lines
+        const unified = diffLines(original, proposed);
+        diffParts = unified.map(part => ({
+            added: part.type === 'added',
+            removed: part.type === 'removed',
+            value: [part.text]
+        }));
+    }
+
+    // Build paired rows
+    const rows = [];
+    let oldIdx = 0, newIdx = 0;
+
+    for (const part of diffParts) {
+        if (!part.added && !part.removed) {
+            // Unchanged lines
+            for (const line of part.value) {
+                rows.push({ oldNum: ++oldIdx, newNum: ++newIdx, oldText: line, newText: line, type: 'unchanged' });
+            }
+        } else if (part.removed) {
+            for (const line of part.value) {
+                rows.push({ oldNum: ++oldIdx, newNum: null, oldText: line, newText: null, type: 'removed' });
+            }
+        } else if (part.added) {
+            for (const line of part.value) {
+                rows.push({ oldNum: null, newNum: ++newIdx, oldText: null, newText: line, type: 'added' });
+            }
+        }
+    }
+
+    // Pair up removed and added rows for side-by-side display
+    const pairedRows = pairDiffRows(rows);
+
+    diffContainerViewport.innerHTML = '';
+    diffContainerViewport.className = 'diff-container-viewport split-mode';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'diff-split-header';
+    header.innerHTML = `
+        <div class="diff-split-pane-header old">
+            <span class="material-symbols-rounded" style="font-size:0.85rem;color:#f87171;">remove_circle</span>
+            ${state.language === 'vi' ? 'File gốc (trước khi sửa)' : 'Original (before)'}
+        </div>
+        <div class="diff-split-pane-header new">
+            <span class="material-symbols-rounded" style="font-size:0.85rem;color:#34d399;">add_circle</span>
+            ${state.language === 'vi' ? 'File mới (sau khi sửa)' : 'Modified (after)'}
+        </div>
+    `;
+    diffContainerViewport.appendChild(header);
+
+    // Render each pair
+    for (const pair of pairedRows) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = `diff-split-row ${pair.type || ''}`;
+
+        const leftNum = pair.oldNum !== null && pair.oldNum !== undefined ? pair.oldNum : '';
+        const rightNum = pair.newNum !== null && pair.newNum !== undefined ? pair.newNum : '';
+        const leftText = pair.oldText !== null && pair.oldText !== undefined ? pair.oldText : '';
+        const rightText = pair.newText !== null && pair.newText !== undefined ? pair.newText : '';
+
+        rowDiv.innerHTML = `
+            <span class="diff-split-num old">${leftNum}</span>
+            <span class="diff-split-code old ${pair.type === 'removed' ? 'hl' : ''}">${escapeHtml(leftText)}</span>
+            <span class="diff-split-num new">${rightNum}</span>
+            <span class="diff-split-code new ${pair.type === 'added' ? 'hl' : ''}">${escapeHtml(rightText)}</span>
+        `;
+        diffContainerViewport.appendChild(rowDiv);
+    }
+
+    // Stats
+    const stats = document.createElement('div');
+    stats.className = 'diff-stats';
+    const addedCount = rows.filter(r => r.type === 'added').length;
+    const removedCount = rows.filter(r => r.type === 'removed').length;
+    stats.innerHTML = `<span class="diff-stat added">+${addedCount}</span> <span class="diff-stat removed">-${removedCount}</span>`;
+    diffContainerViewport.appendChild(stats);
+}
+
+function renderUnifiedDiff(original, proposed, filepath) {
+    const diffResult = diffLines(original, proposed);
+
+    diffContainerViewport.innerHTML = '';
+    diffContainerViewport.className = 'diff-container-viewport unified-mode';
+
+    let lastUnchangedCount = 0;
+    const UNCHANGED_COLLAPSE_THRESHOLD = 5;
+
+    diffResult.forEach((line, idx) => {
+        if (line.type === 'unchanged') {
+            lastUnchangedCount++;
+            if (lastUnchangedCount > UNCHANGED_COLLAPSE_THRESHOLD) {
+                // Show collapse indicator only once
+                if (lastUnchangedCount === UNCHANGED_COLLAPSE_THRESHOLD + 1) {
+                    const collapseDiv = document.createElement('div');
+                    collapseDiv.className = 'diff-collapse-indicator';
+                    collapseDiv.innerHTML = `<span class="material-symbols-rounded" style="font-size:0.8rem;">unfold_more</span> ...`;
+                    collapseDiv.title = state.language === 'vi' ? 'Lines unchanged (ẩn bớt)' : 'Lines unchanged (hidden)';
+                    diffContainerViewport.appendChild(collapseDiv);
+                }
+                return; // Skip redundant unchanged lines
+            }
+        } else {
+            lastUnchangedCount = 0;
+        }
+
+        const lineDiv = document.createElement('div');
+        lineDiv.className = `diff-line ${line.type}`;
+
+        const numSpan = document.createElement('span');
+        numSpan.className = 'diff-line-num';
+        if (line.type === 'added') {
+            numSpan.textContent = `+${line.newLine || ''}`;
+        } else if (line.type === 'removed') {
+            numSpan.textContent = `-${line.oldLine || ''}`;
+        } else {
+            numSpan.textContent = line.oldLine || '';
+        }
+
+        const contentSpan = document.createElement('span');
+        contentSpan.className = 'diff-line-content';
+        contentSpan.textContent = line.text;
+
+        lineDiv.appendChild(numSpan);
+        lineDiv.appendChild(contentSpan);
+        diffContainerViewport.appendChild(lineDiv);
+    });
+
+    // Stats
+    const addedCount = diffResult.filter(r => r.type === 'added').length;
+    const removedCount = diffResult.filter(r => r.type === 'removed').length;
+    const stats = document.createElement('div');
+    stats.className = 'diff-stats';
+    stats.innerHTML = `<span class="diff-stat added">+${addedCount}</span> <span class="diff-stat removed">-${removedCount}</span>`;
+    diffContainerViewport.appendChild(stats);
+}
+
+function pairDiffRows(rows) {
+    const result = [];
+    let i = 0;
+
+    while (i < rows.length) {
+        if (rows[i].type === 'unchanged') {
+            result.push(rows[i]);
+            i++;
+        } else if (rows[i].type === 'removed') {
+            // Collect consecutive removed lines
+            const removed = [];
+            while (i < rows.length && rows[i].type === 'removed') {
+                removed.push(rows[i]);
+                i++;
+            }
+            // Collect consecutive added lines
+            const added = [];
+            while (i < rows.length && rows[i].type === 'added') {
+                added.push(rows[i]);
+                i++;
+            }
+            // Pair them
+            const maxLen = Math.max(removed.length, added.length);
+            for (let j = 0; j < maxLen; j++) {
+                const oldRow = removed[j] || { oldNum: '', oldText: '', type: 'blank' };
+                const newRow = added[j] || { newNum: '', newText: '', type: 'blank' };
+                result.push({
+                    oldNum: oldRow.oldNum,
+                    newNum: newRow.newNum,
+                    oldText: oldRow.oldText,
+                    newText: newRow.newText,
+                    type: j < removed.length && j < added.length ? 'changed' : (j < removed.length ? 'removed' : 'added')
+                });
+            }
+        } else if (rows[i].type === 'added') {
+            // Added without preceding removed
+            result.push({
+                oldNum: null,
+                newNum: rows[i].newNum,
+                oldText: '',
+                newText: rows[i].newText,
+                type: 'added'
+            });
+            i++;
+        } else {
+            result.push(rows[i]);
+            i++;
+        }
+    }
+
+    return result;
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
 }
 
 // Interactive divider resizing logic for sidebar and assistant panel

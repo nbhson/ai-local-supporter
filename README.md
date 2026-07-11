@@ -22,6 +22,8 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 - **OCR Fallback**: Tesseract OCR cho model không hỗ trợ vision
 - 💬 **Chat với tài liệu**: Đặt câu hỏi về nội dung, AI trả lời dựa trên tài liệu
 - 🎯 **Câu hỏi gợi ý**: Tóm tắt, điểm chính, kết luận
+- 🔍 **Hybrid RAG Search**: Kết hợp vector similarity (fastembed) + keyword BM25 search với Reciprocal Rank Fusion
+- 📝 **Code-aware Chunking**: Tự động nhận diện và phân mảnh code theo ranh giới function/class
 
 ### 💻 Phân tích Code
 - **Paste code**: Hỗ trợ mọi ngôn ngữ lập trình
@@ -33,7 +35,13 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 ### 📁 Dự án (Project Workspace Agent)
 - 🤖 **AI Coding Agent**: Hoạt động như một Software Engineer thực thụ dựa trên mô hình **ReAct (Reasoning and Action)**.
 - ⚙️ **Tự động hóa hoàn toàn (Auto-planning)**: AI tự động lên kế hoạch và thực thi công việc mà không cần người dùng chọn file thủ công.
-- 🛠️ **Hệ thống Tools cục bộ**: AI tự động tìm kiếm file, đọc/ghi đè/tạo file mới, duyệt cấu trúc thư mục, và chạy thử nghiệm (RUN_COMMAND) ngay trên dự án.
+- 🛠️ **Hệ thống 12 Công cụ cục bộ**:
+  - `READ_FILE` / `WRITE_FILE` / `EDIT_FILE` — Đọc, ghi, chỉnh sửa file
+  - `LIST_DIR` / `SEARCH_FILES` / `REGEX_SEARCH` — Duyệt và tìm kiếm
+  - `RUN_COMMAND` / `RUN_TESTS` / `LINT_CODE` — Chạy lệnh, test, lint
+  - `GIT_DIFF` / `GIT_LOG` — Xem thay đổi Git
+  - `FINISH` — Kết thúc tác vụ
+- 📊 **File Importance Scoring**: Tự động sắp xếp file theo mức độ quan trọng trong cây thư mục.
 - 🔄 **Realtime Interactive UI**: Timeline hiển thị chi tiết các bước suy nghĩ (thoughts), tool gọi và logs, kèm theo khả năng cập nhật code tự động lên Editor Monaco.
 
 ### 💬 Trò chuyện tự do
@@ -46,6 +54,8 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 - 🎯 **Đa model**: Chọn bất kỳ model Ollama nào đã cài
 - 🎨 **Dark mode**: Giao diện tối, responsive
 - 📱 **Drag & drop**: Upload file dễ dàng
+- 🧩 **Modular Frontend**: CSS/JS phân theo từng tính năng (chat, doc, project)
+- 📊 **Structured Logging**: Hệ thống log màu sắc, chi tiết cho debugging
 
 ---
 
@@ -61,11 +71,49 @@ WebUI phân tích tài liệu và code sử dụng **Ollama** (AI local) với h
 ## 🛠 Công nghệ sử dụng
 
 - **Backend**: Python Flask, Celery
-- **Frontend**: HTML, CSS, JavaScript (thuần)
+- **Frontend**: HTML, CSS, JavaScript (thuần, modular)
 - **AI / LLM**: Ollama (Local LLM), FastEmbed (Local CPU-based Embedding)
 - **Database**: SQLite (Session history), ChromaDB (Vector DB)
 - **Message Broker**: Redis (Celery task queue)
 - **OCR Engine**: Tesseract OCR (Fallback)
+- **RAG**: Hybrid Search (Vector + BM25 Keyword), Reciprocal Rank Fusion, Code-aware Chunking
+
+---
+
+## 📁 Cấu trúc dự án (Tóm tắt)
+
+```
+ai-local-support/
+├── app.py                  # Khởi chạy ứng dụng Flask
+├── app_factory.py          # Application Factory & Blueprints registration
+├── celery_app.py           # Celery App configuration
+├── tasks.py                # Celery background tasks
+├── config.py               # System configuration (models, RAG, tools...)
+├── blueprints/             # API endpoint modules (Controller Layer)
+│   ├── doc.py              # Document APIs (upload, RAG chat, status)
+│   ├── chat.py             # Code analysis & Free chat APIs
+│   └── project.py          # Project workspace & Agent APIs
+├── services/               # Business logic & data layers
+│   ├── agent_service.py    # ReAct Agent loop engine
+│   ├── agent_tool_service.py # 12 Agent tools (Command Pattern)
+│   ├── rag_service.py      # Hybrid RAG (Vector + BM25 + fastembed)
+│   ├── ollama_service.py   # Ollama API integration
+│   ├── extractor_service.py # Document extraction (Strategy & Factory)
+│   ├── document_service.py # PDF, Word, OCR processing
+│   ├── helper_service.py   # SSE, chat history, path safety utilities
+│   ├── logger.py           # Structured colored logger (AILogger)
+│   ├── repositories.py     # Database access layer (Repository Pattern)
+│   ├── models.py           # SQLAlchemy models (5 tables)
+│   ├── database.py         # SQLAlchemy instance
+│   └── errors.py           # Custom exceptions
+├── static/                 # Frontend assets (modular)
+│   ├── css/                # base.css, chat.css, components.css, project.css
+│   └── js/                 # chat.js, doc.js, project.js, state.js, diff.min.js
+├── templates/
+│   └── index.html          # Single Page Application
+└── tests/
+    └── test_basic.py       # Pytest regression tests
+```
 
 ---
 

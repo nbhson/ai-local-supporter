@@ -9,6 +9,7 @@ from services.database import db
 from services.models import ChatMessage
 from services.ollama_service import call_ollama
 from services.helper_service import get_lang_instruction, format_sse_event, retrieve_chat_history, save_chat_message
+from services.logger import log
 
 # In-memory cache for project tree with TTL (prevents unbounded memory growth)
 # Format: session_id -> {"tree": tree, "stats": stats, "timestamp": float}
@@ -237,6 +238,9 @@ def generate_agent_stream(session_id, project_path, question, language, model, c
     """Executes the main ReAct software development agent loop, yielding SSE events."""
     from app import app
     with app.app_context():
+        log.agent_start(session_id, question, model, agent_mode)
+        log.info("Project path set", path=project_path, lang=language)
+
         lang_instruction = get_lang_instruction(language)
         
         if agent_mode:
@@ -293,6 +297,8 @@ To call a tool, you MUST output the exact tag format at the very end of your res
 RULES:
 - When writing files, ALWAYS output the FULL file content in code block.
 - PREFER [EDIT_FILE] over [WRITE_FILE] when making targeted changes to existing files. Only use [WRITE_FILE] for new files or complete rewrites.
+- CRITICAL AUTO-APPLY: All file changes via [WRITE_FILE] and [EDIT_FILE] are applied automatically and immediately. Do NOT ask for user confirmation. Just make the changes directly.
+- NEVER output code blocks (```) in your text response for file modifications. ALWAYS use [WRITE_FILE] or [EDIT_FILE] tool calls instead. Code blocks in your response text are for explanation/display only, NOT for applying changes.
 - Paths must be relative to the project root (no leading '/').
 - You can output multiple tool call tags at the end of your response when you need info or actions on multiple files.
 - For thought process, keep it extremely concise (1-2 sentences) inside . For simple greetings or casual chat, SKIP the thought process and reply immediately.
@@ -300,6 +306,13 @@ RULES:
 - CRITICAL: If a file's content is already provided in the ADDITIONAL CONTEXT, DO NOT use [READ_FILE] on it and DO NOT print its code in your response. Answer the user directly!
 - After writing or editing a file, ALWAYS run [RUN_TESTS] or [LINT_CODE] to verify your changes don't break anything.
 - If the user is only asking a question, explanation, or general query that does NOT require modifying files or running commands, answer the query directly and append [FINISH] at the end of your response. Do NOT call other tools like [READ_FILE] or [LIST_DIR] unnecessarily.
+- CRITICAL RENAME / REFACOR RULE: When the user asks to rename something (a function, variable, class, method, file, folder, or any identifier), you MUST:
+  1. First use [SEARCH_FILES: old_name] to find ALL files that reference or contain the old name.
+  2. Then use [REGEX_SEARCH: old_name | *.py] (and similar for *.js, *.ts, etc.) to ensure you don't miss any references.
+  3. Read each file that contains the old name using [READ_FILE].
+  4. Update ALL occurrences across ALL files using [EDIT_FILE] on each file.
+  5. Only after updating ALL files, output [FINISH].
+  NEVER rename in just one file. The goal is to perform a project-wide rename.
 
 EXAMPLE — Fixing a bug:
 [SEARCH_FILES: def login]
@@ -345,27 +358,35 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
 """
 
         messages = [{"role": "system", "content": system_prompt}]
-        
+
         # Retrieve history
-        messages.extend(retrieve_chat_history(session_id, config.PROJECT_HISTORY_LIMIT, skip_first=False))
-        
+        history = retrieve_chat_history(session_id, config.PROJECT_HISTORY_LIMIT, skip_first=False)
+        log.db_query("ChatMessage", session_id, count=len(history))
+        messages.extend(history)
+
         # Save user message to history
         save_chat_message(session_id, 'user', question)
-        
+        log.info("User question saved", question_preview=question[:120])
+
         # Append current user question
         messages.append({"role": "user", "content": question})
-        
+
         max_iterations = config.AGENT_MAX_ITERATIONS if agent_mode else 1
         initial_messages_count = len(messages)
+        log.info("Context ready", total_messages=len(messages), max_iterations=max_iterations)
 
         for iteration in range(max_iterations):
+            log.agent_iteration(session_id, iteration, max_iterations)
+
             # Send iteration status
             status_msg = f"AI is thinking (Loop {iteration+1}/10)..." if language == 'en' else f"AI đang suy nghĩ (Vòng lặp {iteration+1}/10)..."
             yield format_sse_event('agent_status', status=status_msg)
             time.sleep(0.1)
-            
+
             # Call Ollama
             current_answer = ""
+            log.agent_ollama_call(session_id, iteration, len(messages))
+            ollama_start = time.time()
             generator = call_ollama(messages, model, stream=True)
             
             for chunk in generator:
@@ -380,22 +401,32 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
                                 yield format_sse_event('content', content=content)
                             elif "error" in data_json:
                                 error_msg = data_json["error"]
+                                log.error("Ollama returned error in stream", error=error_msg)
                                 yield format_sse_event('content', content=f"❌ **Error:** {error_msg}")
                         except:
                             pass
-            
+
+            ollama_ms = (time.time() - ollama_start) * 1000
+            log.agent_ollama_response(session_id, iteration, len(current_answer))
+            log.ollama_success(ollama_ms)
+
             # Append assistant response to messages history
             messages.append({"role": "assistant", "content": current_answer})
-            
+
             # Parse tool calls
             tool_calls = parse_all_tool_calls(current_answer)
+            tool_names = [tc['tool'] for tc in tool_calls]
+            log.agent_parse_tools(session_id, iteration, len(tool_calls), tool_names)
+
             if not tool_calls:
+                log.info("No tool calls → finishing loop")
                 yield format_sse_event('agent_status', status='Finished (No tool call)' if language == 'en' else 'Hoàn thành (Không có tool call)')
                 break
-                
+
             # Check for FINISH
             has_finish = any(tc['tool'] == 'FINISH' for tc in tool_calls)
             if has_finish:
+                log.success("FINISH detected → exiting agent loop")
                 yield format_sse_event('agent_status', status='Agent finished tasks successfully!' if language == 'en' else 'Agent hoàn thành công việc thành công!')
                 break
             
@@ -404,10 +435,11 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
                 tool_name = tool_call['tool']
                 tool_args = tool_call['args']
                 call_id = f"call_{iteration}_{idx}"
-                
-                # Yield tool call event
+
+                # Log and yield tool call event
+                log.tool_call(tool_name, tool_args, call_id=call_id)
                 yield format_sse_event('tool_call', tool=tool_name, args=tool_args, call_id=call_id)
-                
+
                 tool_status = f"Running tool {tool_name}..." if language == 'en' else f"Đang chạy tool {tool_name}..."
                 if tool_name == 'READ_FILE':
                     tool_status = f"Reading file: {tool_args.get('path')}..." if language == 'en' else f"Đang đọc file: {tool_args.get('path')}..."
@@ -417,22 +449,28 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
                     tool_status = f"Running command: {tool_args.get('command')}..." if language == 'en' else f"Đang chạy lệnh: {tool_args.get('command')}..."
                 yield format_sse_event('agent_status', status=tool_status)
                 time.sleep(0.05)
-                
-                # Execute tool
+
+                # Execute tool with timing
+                tool_start = time.time()
                 tool_result = execute_agent_tool(tool_name, tool_args, project_path)
+                tool_ms = (time.time() - tool_start) * 1000
+
+                log.tool_result(tool_name, tool_result, call_id=call_id, duration_ms=tool_ms)
+
                 if tool_name == 'WRITE_FILE':
                     invalidate_project_tree_cache(session_id)
-                
+                    log.info("Project tree cache invalidated (file was written)")
+
                 # Yield tool result event
                 display_result = tool_result
                 if len(display_result) > 5000:
                     display_result = display_result[:5000] + "\n...[output truncated due to length]"
                 yield format_sse_event('tool_result', tool=tool_name, args=tool_args, result=display_result, call_id=call_id)
-                
+
                 post_status = f"Finished tool {tool_name}." if language == 'en' else f"Đã chạy xong tool {tool_name}."
                 yield format_sse_event('agent_status', status=post_status)
                 time.sleep(0.05)
-                
+
                 # Format output for model prompt
                 model_tool_result = tool_result
                 if len(model_tool_result) > 15000:
@@ -441,17 +479,20 @@ For thought process, keep it extremely concise (1-2 sentences) inside <think>...
             
             # Combine all results into one user message for the next iteration
             combined_results = "\n\n---\n\n".join(results_contents)
+            log.info("Combining tool results for next iteration", tools_count=len(tool_calls), results_size=len(combined_results))
             messages.append({
                 "role": "user",
                 "content": f"Tool execution results:\n\n{combined_results}\n\nPlease proceed to the next step."
             })
-        
+
         # Save final response summary to SQLite
         final_summary = ""
         for msg in messages[initial_messages_count:]:
             if msg["role"] == "assistant":
                 final_summary += msg["content"] + "\n\n"
-        
+
         save_chat_message(session_id, 'assistant', final_summary.strip())
-        
+        log.agent_finish(session_id, max_iterations)
+        log.info("Final response saved to DB", summary_length=len(final_summary.strip()))
+
         yield "data: [DONE]\n\n"

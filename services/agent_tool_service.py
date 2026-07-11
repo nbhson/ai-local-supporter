@@ -3,6 +3,7 @@ import re
 import subprocess
 import config
 from services.helper_service import safe_join_project_path
+from services.logger import log
 
 class BaseAgentTool:
     def execute(self, args: dict, project_path: str) -> str:
@@ -387,5 +388,7 @@ class ToolRegistry:
     def execute_tool(cls, tool_name: str, args: dict, project_path: str) -> str:
         tool = cls._tools.get(tool_name)
         if not tool:
+            log.error(f"Unknown tool requested: {tool_name}")
             return f"Error: Unknown tool {tool_name}"
+        log.debug(f"ToolRegistry dispatch → {tool_name}")
         return tool.execute(args, project_path)
