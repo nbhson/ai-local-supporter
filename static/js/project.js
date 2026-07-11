@@ -739,11 +739,15 @@ function diffLines(oldStr, newStr) {
 // Markdown parser & Proposed Code block extractor for Project Chat
 let proposedBlocks = [];
 let _pendingAutoApplies = [];
+let _processedAutoApplyKeys = new Set();
 
 function processPendingAutoApplies() {
     const items = [..._pendingAutoApplies];
     _pendingAutoApplies = [];
     items.forEach(item => {
+        const key = `${item.action}:${item.index}`;
+        if (_processedAutoApplyKeys.has(key)) return; // Skip already processed
+        _processedAutoApplyKeys.add(key);
         setTimeout(() => {
             if (item.action === 'create') {
                 createProposedFile(item.index);
@@ -1387,6 +1391,9 @@ async function updateAgentTimelineStep(stepId, status, result, toolName, args) {
 async function sendProjectMessage() {
     const question = projectChatInput.value.trim();
     if (!question || state.project.isProcessing || !state.project.sessionId) return;
+
+    // Reset dedup tracking for auto-apply operations for this new message
+    _processedAutoApplyKeys.clear();
 
     state.project.isProcessing = true;
     projectChatInput.disabled = true;
