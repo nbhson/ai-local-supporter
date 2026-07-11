@@ -986,31 +986,62 @@ function formatProjectMessage(text) {
         let htmlBlock = "";
 
         if (isAgentMode) {
-            // Agent mode: compact summary, no code block, auto-apply
-            const icon = action === 'create' ? 'add_circle' : 'edit';
-            const label = action === 'create'
-                ? (state.language === 'vi' ? 'Tạo file:' : 'Created file:')
-                : (state.language === 'vi' ? 'Sửa file:' : 'Modified:');
-            const pathDisplay = targetPath || '?';
-            const lineCount = code.split('\n').length;
-
-            actionHtml = `<div class="ai-code-action-bar auto-apply">
-                <span class="ai-code-tag-title ${action === 'create' ? 'create' : 'modify'}">
-                    <span class="material-symbols-rounded">${icon}</span> ${label} <code>${pathDisplay}</code>
-                    <span style="color: var(--text-muted); font-weight: 400; font-size: 0.65rem; margin-left: 4px;">${lineCount} lines</span>
-                </span>
-                <span class="material-symbols-rounded" style="font-size: 1rem; color: var(--success);">check_circle</span>
-            </div>`;
-
-            htmlBlock = `<div class="code-block-wrapper agent-compact" style="margin-top: 6px; margin-bottom: 6px;">
-                ${actionHtml}
-            </div>`;
-
-            // Queue auto-apply for after rendering
             if (action === 'create') {
+                // New files: auto-create without confirmation
+                const icon = 'add_circle';
+                const label = state.language === 'vi' ? 'Tạo file:' : 'Created file:';
+                const pathDisplay = targetPath || '?';
+                const lineCount = code.split('\n').length;
+
+                actionHtml = `<div class="ai-code-action-bar auto-apply">
+                    <span class="ai-code-tag-title create">
+                        <span class="material-symbols-rounded">${icon}</span> ${label} <code>${pathDisplay}</code>
+                        <span style="color: var(--text-muted); font-weight: 400; font-size: 0.65rem; margin-left: 4px;">${lineCount} lines</span>
+                    </span>
+                    <span class="material-symbols-rounded" style="font-size: 1rem; color: var(--success);">check_circle</span>
+                </div>`;
+
+                htmlBlock = `<div class="code-block-wrapper agent-compact" style="margin-top: 6px; margin-bottom: 6px;">
+                    ${actionHtml}
+                </div>`;
+
+                // Queue auto-apply for new files
                 _pendingAutoApplies.push({ action: 'create', index: blockIndex });
-            } else if (targetPath) {
-                _pendingAutoApplies.push({ action: 'modify', index: blockIndex });
+            } else {
+                // Existing files: show full code block with Compare/Apply for user review
+                actionHtml = targetPath ? `
+                    <div class="ai-code-action-bar">
+                        <span class="ai-code-tag-title modify">
+                            <span class="material-symbols-rounded">edit</span> ${state.language === 'vi' ? 'Sửa file:' : 'Modify file:'} <code>${targetPath.split('/').pop()}</code>
+                            <span style="color: var(--text-muted); font-weight: 400; font-size: 0.65rem; margin-left: 4px;">${code.split('\n').length} lines</span>
+                        </span>
+                        <div style="display: flex; gap: 6px;">
+                            <button class="btn-code-action" onclick="compareProposedCode(${blockIndex})">
+                                <span class="material-symbols-rounded">compare</span> ${state.language === 'vi' ? 'So sánh' : 'Compare'}
+                            </button>
+                            <button class="btn-code-action btn-apply-direct" onclick="applyProposedCode(${blockIndex})">
+                                <span class="material-symbols-rounded">check</span> ${state.language === 'vi' ? 'Áp dụng' : 'Apply'}
+                            </button>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="ai-code-action-bar">
+                        <span style="font-size: 0.72rem; color: var(--text-muted); font-style: italic;">
+                            ${state.language === 'vi' ? 'Chưa chọn file áp dụng' : 'No target file selected'}
+                        </span>
+                    </div>
+                `;
+
+                htmlBlock = `<div class="code-block-wrapper" style="margin-top: 10px;">
+                    ${actionHtml}
+                    <div class="code-header">
+                        <span>${lang || 'code'}</span>
+                        <button class="copy-code-btn" onclick="copyCodeToClipboard(this)" data-code="${escapedCode}" title="Copy Code">
+                            <span class="material-symbols-rounded">content_copy</span>
+                        </button>
+                    </div>
+                    <pre><code class="language-${lang || 'text'}">${escapedCode}</code></pre>
+                </div>`;
             }
         } else {
             // Non-agent mode: full code block with Compare/Apply buttons
