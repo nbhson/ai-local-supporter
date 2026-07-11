@@ -62,8 +62,8 @@ def _build_greeting(doc_files, vision_images_count, language):
             f"I have analyzed {len(doc_files)} documents ({filenames_str}). How can I help you with them?"
         )
 
-@celery.task(name="tasks.process_document_task")
-def process_document_task(session_id, language, model):
+@celery.task(name="tasks.process_document_task", bind=True, max_retries=3)
+def process_document_task(self, session_id, language, model):
     """Asynchronously process multiple documents/images: extract text/image, run OCR, chunk and embed into ChromaDB."""
     try:
         logging.info(f"Starting background processing for session {session_id}")
@@ -107,8 +107,11 @@ def process_document_task(session_id, language, model):
                 doc_file.error_message = str(e)
                 db.session.add(doc_file)
         
-        # Commit files processing statuses
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception as commit_err:
+            logging.exception(f"DB commit failed after file processing: {commit_err}")
+            db.session.rollback()
         
         # Now update the aggregate session status
         failed_files = [f for f in doc_files if f.status == 'failed']
@@ -143,9 +146,13 @@ def process_document_task(session_id, language, model):
         
     except Exception as e:
         logging.exception(f"Error occurred in process_document_task: {e}")
-        session = DocumentSession.query.get(session_id)
-        if session:
-            session.status = 'failed'
-            session.error_message = str(e)
-            db.session.add(session)
-            db.session.commit()
+        try:
+            session = DocumentSession.query.get(session_id)
+            if session:
+                session.status = 'failed'
+                session.error_message = str(e)
+                db.session.add(session)
+                db.session.commit()
+        except Exception as fallback_err:
+            logging.exception(f"Failed to update session status on error: {fallback_err}")
+            db.session.rollback()

@@ -27,6 +27,9 @@ def create_app():
 
     db.init_app(app)
     
+    # Import models so SQLAlchemy metadata knows about them before create_all()
+    import services.models  # noqa: F401
+    
     # Enable WAL mode for SQLite to prevent "database is locked" errors under concurrent write loads.
     # Using a flag to ensure PRAGMA is set only once per process, not on every connection.
     _sqlite_pragma_set = False

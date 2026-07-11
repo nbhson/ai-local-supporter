@@ -18,6 +18,9 @@ celery.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    worker_pool='solo',
+    worker_prefetch_multiplier=1,
+    worker_max_tasks_per_child=50,
 )
 
 # Application Context integration

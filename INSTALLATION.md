@@ -6,7 +6,7 @@ Tài liệu này hướng dẫn chi tiết cách cài đặt các thành phần 
 
 ## 📋 Yêu cầu chung
 Trước khi bắt đầu, hãy đảm bảo hệ thống của bạn đã cài đặt các công cụ sau:
-- **Python 3.8 - 3.12**
+- **Python 3.10 - 3.14**
 - **Ollama** (Đã chạy ở máy local) -> Tải tại [ollama.com](https://ollama.com)
 - **Tesseract OCR** (Tùy chọn, để hỗ trợ nhận diện text trên hình ảnh đối với model không hỗ trợ vision)
   - macOS: `brew install tesseract`
@@ -60,7 +60,7 @@ Mở **2 tab Terminal** song song (cả 2 đều cần kích hoạt `.venv` trư
 - **Terminal 1 (Celery Worker):**
   ```bash
   source .venv/bin/activate
-  celery -A tasks.celery worker --loglevel=info
+  celery -A tasks.celery worker --loglevel=info --pool=solo
   ```
 - **Terminal 2 (Flask Server):**
   ```bash
@@ -238,8 +238,16 @@ Bạn có thể thay đổi các cấu hình như Model mặc định, URL cổn
   - Đảm bảo bạn đã khởi chạy Redis Server thành công (`docker ps` hoặc `brew services list`).
   - Kiểm tra kết nối tới Redis bằng cách chạy lệnh: `redis-cli ping` (phản hồi `PONG` là hoạt động tốt).
   - Bạn có thể xem các task đang chuyển tải qua Redis theo thời gian thực bằng lệnh: `redis-cli monitor`.
-  - Đảm bảo bạn đã khởi chạy Celery worker bằng lệnh: `celery -A tasks.celery worker --loglevel=info` trong môi trường ảo `.venv` đã kích hoạt.
+  - Đảm bảo bạn đã khởi chạy Celery worker bằng lệnh: `celery -A tasks.celery worker --loglevel=info --pool=solo` trong môi trường ảo `.venv` đã kích hoạt.
   - Kiểm tra log của Celery worker để xem có lỗi gì khi import thư viện hoặc lỗi kết nối Redis/Ollama không.
+
+### 6b. Celery worker crash với `SIGTRAP` hoặc `WorkerLostError`?
+- **Nguyên nhân**: Trên Python 3.14+ với macOS, Celery worker sử dụng `prefork` pool gặp xung đột khi fork process cùng lúc với các native C/C++ extensions (fastembed, chromadb, numpy) dẫn đến crash `signal 5 (SIGTRAP)`.
+- **Giải pháp**: Luôn chạy worker với `--pool=solo`:
+  ```bash
+  celery -A tasks.celery worker --loglevel=info --pool=solo
+  ```
+  Solo pool chạy mỗi task trong 1 process riêng, tránh hoàn toàn lỗi fork. Cấu hình này đã được đặt mặc định trong `celery_app.py`.
 
 ### 7. Port 5001 đã được sử dụng?
 - **Giải pháp**: Kiểm tra và giải phóng cổng 5001 (thường bị chiếm bởi dịch vụ AirPlay Receiver trên macOS):
